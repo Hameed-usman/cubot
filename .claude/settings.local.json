@@ -1,0 +1,37 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run *)",
+      "Bash(npm install *)",
+      "Bash(curl -s http://localhost:3000)",
+      "Bash(pkill -f \"next dev\")",
+      "Bash(curl -s -X POST http://localhost:3000/api/chat -H 'Content-Type: application/json' -d '{\"message\":\"What are admission requirements?\",\"conversationHistory\":[]}')",
+      "Bash(curl -s -X POST http://localhost:3001/api/chat -H 'Content-Type: application/json' -d '{\"message\":\"What are admission requirements?\",\"conversationHistory\":[]}')",
+      "Bash(curl -v -X POST http://localhost:3001/api/chat -H 'Content-Type: application/json' -d '{\"message\":\"What are admission requirements?\",\"conversationHistory\":[]}')",
+      "Bash(taskkill /F /IM node.exe)",
+      "Bash(curl -s http://localhost:3000/api/chat -X POST -H \"Content-Type: application/json\" -d '{\"message\":\"hello\",\"conversationHistory\":[]}')",
+      "Bash(curl -s http://localhost:3002/api/chat -X POST -H \"Content-Type: application/json\" -d '{\"message\":\"What are admission requirements?\",\"conversationHistory\":[]}')",
+      "Bash(curl -s http://localhost:3000/api/chat -X POST -H \"Content-Type: application/json\" -d '{\"message\":\"What are admission requirements?\",\"conversationHistory\":[]}')",
+      "Bash(netstat -ano)",
+      "Bash(taskkill /F /PID 6928)",
+      "Bash(curl -s http://localhost:3003/api/chat -X POST -H \"Content-Type: application/json\" -d '{\"message\":\"What are admission requirements?\",\"conversationHistory\":[]}')",
+      "Bash(curl -s http://localhost:3004/api/chat -X POST -H \"Content-Type: application/json\" -d '{\"message\":\"What are admission requirements?\",\"conversationHistory\":[]}')",
+      "Bash(rm -rf .next)",
+      "Bash(curl -s http://localhost:3000/api/chat -X POST -H \"Content-Type: application/json\" -d '{\"message\":\"admission\",\"conversationHistory\":[]}')",
+      "Bash(curl -s http://localhost:3005/api/chat -X POST -H \"Content-Type: application/json\" -d '{\"message\":\"admission\",\"conversationHistory\":[]}')",
+      "Bash(curl -s http://localhost:3005/api/chat -X POST -H \"Content-Type: application/json\" -d '{\"message\":\"What are admission requirements?\",\"conversationHistory\":[]}')",
+      "Bash(git rm *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "Bash(git reset *)",
+      "Bash(rm -rf .git)",
+      "Bash(git init *)",
+      "Bash(git remote *)",
+      "Bash(curl -s http://localhost:3000/api/chat -X POST -H \"Content-Type: application/json\" -d '{\"message\":\"What is the fee for BBA?\",\"conversationHistory\":[]}')",
+      "Bash(curl -s http://localhost:3000/api/chat -X POST -H \"Content-Type: application/json\" -d '{\"message\":\"بی بی اے کی فیس کیا ہے؟\",\"conversationHistory\":[]}')",
+      "Bash(curl -s http://localhost:3000/api/chat -X POST -H \"Content-Type: application/json\" -d '{\"message\":\"بی بی اے کی فیس کتنی ہے؟\",\"conversationHistory\":[]}')",
+      "Bash(curl -s http://localhost:3000/api/chat -X POST -H \"Content-Type: application/json\" -d '{\"message\":\"بی بی اے کی فیس کتنی ہے\",\"conversationHistory\":[]}')"
+    ]
+  }
+}
