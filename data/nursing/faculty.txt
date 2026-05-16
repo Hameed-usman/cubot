@@ -1,0 +1,25 @@
+NURSING FACULTY
+
+Ms. Parveen Akhtar
+- Position: Associate Professor & Head
+- Qualification: MSc Nursing, Aga Khan University
+- Specialization: Community Health Nursing
+- Email: parveen@cityuniversity.edu.pk
+
+Mr. Gul Hassan
+- Position: Associate Professor
+- Qualification: MSc Nursing, University of Peshawar
+- Specialization: Medical-Surgical Nursing
+- Email: gulhassan@cityuniversity.edu.pk
+
+Ms. Nazia Bibi
+- Position: Assistant Professor
+- Qualification: BSc Nursing, Aga Khan University
+- Specialization: Pediatric Nursing
+- Email: nazia@cityuniversity.edu.pk
+
+Ms. Fouzia Khan
+- Position: Clinical Instructor
+- Qualification: BSc Nursing, Peshawar
+- Specialization: Maternal Health Nursing
+- Email: fouzia@cityuniversity.edu.pk

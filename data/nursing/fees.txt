@@ -1,0 +1,15 @@
+NURSING FEE STRUCTURE
+
+Generic BSN:
+- Admission Fee: Rs. 25,000 (one-time)
+- Tuition Fee (per semester): Rs. 70,000
+- Clinical Fee (per semester): Rs. 10,000
+- Uniform Fee: Rs. 8,000 (first year)
+- Library Fee (per semester): Rs. 2,000
+- Total per semester: Rs. 82,000
+
+Post-RN BSN:
+- Admission Fee: Rs. 25,000 (one-time)
+- Tuition Fee (per semester): Rs. 75,000
+
+Note: Additional charges for hostel, transport, and clinical uniforms.

@@ -1,0 +1,25 @@
+BBA FACULTY
+
+Dr. Muhammad Saleem
+- Position: Professor & Dean Business Studies
+- Qualification: PhD Business Administration, University of Karachi
+- Specialization: Strategic Management, Marketing
+- Email: saleem@cityuniversity.edu.pk
+
+Dr. Rabia Khan
+- Position: Associate Professor
+- Qualification: PhD Management Sciences, IIUI
+- Specialization: Human Resource Management
+- Email: rabiakhan@cityuniversity.edu.pk
+
+Mr. Zahid Mahmood
+- Position: Assistant Professor
+- Qualification: MBA, University of Peshawar
+- Specialization: Finance, Accounting
+- Email: zahidm@cityuniversity.edu.pk
+
+Ms. Hira Shah
+- Position: Lecturer
+- Qualification: MBA, City University Peshawar
+- Specialization: Marketing, Entrepreneurship
+- Email: hirashah@cityuniversity.edu.pk

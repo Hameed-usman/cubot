@@ -1,0 +1,29 @@
+NURSING COURSES (BSN)
+
+Year 1:
+- Anatomy & Physiology
+- Fundamentals of Nursing
+- Nursing Ethics
+- Communication Skills
+- Community Health I
+
+Year 2:
+- Medical-Surgical Nursing I
+- Pharmacology
+- Nutrition
+- Health Assessment
+- Psychology
+
+Year 3:
+- Medical-Surgical Nursing II
+- Pediatric Nursing
+- Maternal Health Nursing
+- Community Health II
+- Nursing Research
+
+Year 4:
+- Mental Health Nursing
+- Leadership & Management
+- Critical Care Nursing
+- Nursing Practicum
+- Capstone Project

@@ -1,0 +1,35 @@
+PHARMACY COURSES (Pharm-D)
+
+Year 1:
+- Pharmaceutics I
+- Pharmaceutical Chemistry I
+- Anatomy & Physiology
+- Mathematics
+- English
+
+Year 2:
+- Pharmaceutics II
+- Pharmaceutical Chemistry II
+- Biochemistry
+- Pharmacology I
+- Microbiology
+
+Year 3:
+- Pharmacology II
+- Pharmacognosy
+- Clinical Pharmacy I
+- Pharmaceutical Technology
+- Pathophysiology
+
+Year 4:
+- Clinical Pharmacy II
+- Therapeutics
+- Hospital Pharmacy
+- Community Pharmacy
+- Drug Interaction
+
+Year 5:
+- Pharmacy Practice
+- Industrial Pharmacy
+- Research Project
+- Clerkship

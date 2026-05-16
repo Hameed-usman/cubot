@@ -1,0 +1,31 @@
+CS & IT FACULTY
+
+Dr. Ahmad Khan
+- Position: Professor & Head of Department
+- Qualification: PhD Computer Science, University of Manchester
+- Specialization: Artificial Intelligence, Machine Learning
+- Email: ahmad.khan@cityuniversity.edu.pk
+
+Dr. Fatima Bibi
+- Position: Associate Professor
+- Qualification: PhD Computer Science, NUST Islamabad
+- Specialization: Database Systems, Data Mining
+- Email: fatima.bibi@cityuniversity.edu.pk
+
+Mr. Omar Hassan
+- Position: Assistant Professor
+- Qualification: MS Computer Science, UET Peshawar
+- Specialization: Web Development, Cloud Computing
+- Email: omar.hassan@cityuniversity.edu.pk
+
+Ms. Sara Ahmed
+- Position: Assistant Professor
+- Qualification: MS Information Technology, University of Peshawar
+- Specialization: Cybersecurity, Network Security
+- Email: sara.ahmed@cityuniversity.edu.pk
+
+Mr. Imran Ali
+- Position: Lecturer
+- Qualification: BS Computer Science, City University Peshawar
+- Specialization: Programming, Data Structures
+- Email: imran.ali@cityuniversity.edu.pk

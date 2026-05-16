@@ -1,0 +1,19 @@
+CS & IT SEMESTER PLAN
+
+BS Computer Science (8 Semesters):
+Semester 1-2: Foundation courses, programming basics, mathematics
+Semester 3-4: Core computer science, data structures, algorithms
+Semester 5-6: Advanced topics, databases, networks, software engineering
+Semester 7-8: Specialization courses, final year project, internship
+
+BS Information Technology (8 Semesters):
+Semester 1-2: IT fundamentals, programming, web basics
+Semester 3-4: Database, networks, systems analysis
+Semester 5-6: Web development, security, project management
+Semester 7-8: Advanced IT applications, project, industrial training
+
+MS Programs (4 Semesters):
+Semester 1-2: Coursework
+Semester 3-4: Thesis research and writing
+
+Each semester is approximately 16-18 weeks including study break and exams.
