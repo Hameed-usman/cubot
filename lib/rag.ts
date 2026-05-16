@@ -1,55 +1,89 @@
 import { ChatRequest } from '@/types'
 
-/**
- * Simple chat using direct Groq API (no SDK needed)
- */
+// =====================================================
+// LANGUAGE DETECTION
+// =====================================================
 
-const UNIVERSITY_INFO = `
-You are Cubot, the official AI assistant of City University Peshawar, Pakistan.
-Your personality is warm, professional, and helpful - like a senior university staff member.
-IMPORTANT: Respond in the SAME language the user writes in (Urdu or English).
+function detectLanguage(text: string): 'urdu' | 'english' {
+  const urduRegex = /[؀-ۿݐ-ݿﭐ-﷿ﹰ-﻿]/g
+  const urduMatches = text.match(urduRegex)
+  const urduCharCount = urduMatches ? urduMatches.length : 0
+  return urduCharCount / text.length > 0.12 ? 'urdu' : 'english'
+}
 
-Key Information:
-- City University Peshawar is in Peshawar, Khyber Pakhtunkhwa, Pakistan
-- Phone: +92-91-1234567, Email: info@cityuniversity.edu.pk
-- Programs: Computer Science, IT, BBA, Pharmacy, Nursing
-- Admission: At least 45% marks in Intermediate for Bachelor's
-- Fall Semester starts August, Spring Semester starts January
-- CS/IT fee: ~95,000 Rs/semester, BBA: ~80,000 Rs/semester
-- Facilities: Library, computer labs, sports, cafeteria, transport
-`
+// =====================================================
+// LEARNING SYSTEM
+// =====================================================
 
-/**
- * Run the chat pipeline
- */
-export async function runRAGPipeline(
-  request: ChatRequest
-): Promise<ReadableStream<string>> {
-  const apiKey = process.env.GROQ_API_KEY
-  if (!apiKey) {
-    throw new Error('Groq is not configured. Please set GROQ_API_KEY.')
+interface Correction { question: string; answer: string; timestamp: number }
+
+class LearningSystem {
+  private corrections: Correction[] = []
+  addCorrection(q: string, a: string) {
+    this.corrections.unshift({ question: q, answer: a, timestamp: Date.now() })
+    if (this.corrections.length > 100) this.corrections.pop()
   }
+  getRelevant(q: string): string[] {
+    const key = q.toLowerCase().slice(0, 25)
+    return this.corrections.filter(c => c.question.toLowerCase().includes(key)).map(c => c.answer)
+  }
+  getCount(): number { return this.corrections.length }
+}
+const learningSystem = new LearningSystem()
+
+// =====================================================
+// KNOWLEDGE BASE (SHORT)
+// =====================================================
+
+const KNOWLEDGE = {
+  urdu: `City University Peshawar - فیس: CS/IT=95000, BBA=80000, Pharmacy=108000, Nursing=82000 روپے/سیمیسٹر | داخلہ: 45% نمبرز | فون: +92-91-1234567 | پروگرام: CS, IT, BBA, Pharmacy, Nursing`,
+  english: `City University Peshawar - Fee: CS/IT=95000, BBA=80000, Pharmacy=108000, Nursing=82000 Rs/semester | Admission: 45% marks | Phone: +92-91-1234567 | Programs: CS, IT, BBA, Pharmacy, Nursing`
+}
+
+// =====================================================
+// MAIN FUNCTION
+// =====================================================
+
+export async function runRAGPipeline(request: ChatRequest): Promise<ReadableStream<string>> {
+  const apiKey = process.env.GROQ_API_KEY
+  if (!apiKey) throw new Error('GROQ_API_KEY not configured')
 
   const { message, conversationHistory } = request
+  const lang = detectLanguage(message)
 
-  // Build conversation context
-  const historyText = conversationHistory
-    .slice(-5)
-    .map(msg => msg.role + ': ' + msg.content)
-    .join('\n')
+  // Check for correction
+  const correctionPhrases = ['wrong', 'incorrect', 'غلط', 'درست نہیں']
+  const isCorrection = correctionPhrases.some(p => message.toLowerCase().includes(p))
 
-  const prompt = `${UNIVERSITY_INFO}
-${historyText ? 'Previous conversation:\n' + historyText + '\n' : ''}
-User: ${message}
-Answer as Cubot:`
+  if (isCorrection && conversationHistory.length > 0) {
+    const prevQ = conversationHistory[conversationHistory.length - 1].content
+    learningSystem.addCorrection(prevQ, message.split(correctionPhrases.find(p => message.toLowerCase().includes(p)) || '')[1]?.trim() || 'Updated')
+    return new ReadableStream({
+      start(c) { c.enqueue(lang === 'urdu' ? 'شکریہ! اپڈیٹ ہو گیا۔' : 'Thank you! Updated.'); c.close() }
+    })
+  }
 
-  // Use Groq API directly
+  // Get learned
+  const learned = learningSystem.getRelevant(message)
+  const learnedText = learned.length > 0 ? `\nLearned: ${learned.join(' | ')}` : ''
+
+  // Get conversation context
+  const history = conversationHistory.slice(-3).map(h => `${h.role}: ${h.content}`).join('\n')
+
+  // Build prompt - FORCE LANGUAGE
+  const systemPrompt = lang === 'urdu'
+    ? `You are an AI assistant. Your ONLY response must be in Urdu script (اردو). Never respond in English. Use only Urdu characters. ${KNOWLEDGE.urdu}${learnedText}`
+    : `You are an AI assistant. Your ONLY response must be in English. Never respond in Urdu. ${KNOWLEDGE.english}${learnedText}`
+
+  const prompt = `${systemPrompt}
+${history ? `Context: ${history}\n` : ''}
+Question: ${message}
+Answer (${lang === 'urdu' ? 'URDU SCRIPT ONLY - اردو میں' : 'ENGLISH ONLY'}):`
+
+  // API call
   const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
-    headers: {
-      'Authorization': 'Bearer ' + apiKey,
-      'Content-Type': 'application/json'
-    },
+    headers: { 'Authorization': 'Bearer ' + apiKey, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       model: 'llama-3.3-70b-versatile',
       messages: [{ role: 'user', content: prompt }],
@@ -58,20 +92,16 @@ Answer as Cubot:`
     })
   })
 
-  if (!response.ok) {
-    const err = await response.text()
-    console.error('Groq API error:', err)
-    console.error('Status:', response.status)
-    throw new Error('AI service error: ' + response.status + ' - ' + err)
-  }
+  if (!response.ok) throw new Error('Service unavailable')
 
   const data = await response.json()
-  const content = data.choices?.[0]?.message?.content || 'Sorry, I could not find an answer.'
+  const content = data.choices?.[0]?.message?.content || 'No response'
 
   return new ReadableStream({
-    start(controller) {
-      controller.enqueue(content)
-      controller.close()
-    }
+    start(controller) { controller.enqueue(content); controller.close() }
   })
+}
+
+export function getLearningStats() {
+  return { correctionsCount: learningSystem.getCount() }
 }
