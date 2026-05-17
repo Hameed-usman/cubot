@@ -1,20 +1,23 @@
 'use server'
 
-import { promises as fs } from 'fs';
-import path from 'path';
-
-const DATA_DIR = path.join(process.cwd(), 'data');
+import sql from '@/lib/db';
+import { embedText } from '@/lib/embeddings';
+import { pineconeIndex } from '@/lib/pinecone';
+import { v4 as uuidv4 } from 'uuid';
 
 export async function getDepartmentData(dept: string, section: string) {
   try {
-    const filePath = path.join(DATA_DIR, dept, `${section}.txt`);
-    const content = await fs.readFile(filePath, 'utf-8');
-    return content;
-  } catch (error: any) {
-    // If the file doesn't exist, return empty string
-    if (error.code === 'ENOENT') {
-      return '';
+    const result = await sql`
+      SELECT content FROM knowledge_entries 
+      WHERE category = ${dept} AND title = ${section}
+      LIMIT 1
+    `;
+    
+    if (result.length > 0) {
+      return result[0].content;
     }
+    return '';
+  } catch (error) {
     console.error(`Error reading data for ${dept}/${section}:`, error);
     return '';
   }
@@ -22,17 +25,50 @@ export async function getDepartmentData(dept: string, section: string) {
 
 export async function saveDepartmentData(dept: string, section: string, content: string) {
   try {
-    const deptDir = path.join(DATA_DIR, dept);
+    // 1. Check if entry exists
+    const existing = await sql`
+      SELECT id FROM knowledge_entries 
+      WHERE category = ${dept} AND title = ${section}
+      LIMIT 1
+    `;
     
-    // Ensure the department directory exists
-    try {
-      await fs.access(deptDir);
-    } catch {
-      await fs.mkdir(deptDir, { recursive: true });
+    let id;
+    if (existing.length > 0) {
+      id = existing[0].id;
+      // Update existing
+      await sql`
+        UPDATE knowledge_entries 
+        SET content = ${content}, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ${id}
+      `;
+    } else {
+      // Insert new
+      id = uuidv4();
+      await sql`
+        INSERT INTO knowledge_entries (id, title, content, category)
+        VALUES (${id}, ${section}, ${content}, ${dept})
+      `;
     }
 
-    const filePath = path.join(deptDir, `${section}.txt`);
-    await fs.writeFile(filePath, content, 'utf-8');
+    // 2. Embed content
+    const embedding = await embedText(content);
+
+    // 3. Upsert to Pinecone
+    const index = pineconeIndex.get();
+    if (index) {
+      await index.upsert([{
+        id,
+        values: embedding,
+        metadata: {
+          title: section,
+          category: dept,
+          content
+        }
+      }]);
+    } else {
+      console.warn('Pinecone index not available, vector not upserted.');
+    }
+
     return { success: true };
   } catch (error) {
     console.error(`Error saving data for ${dept}/${section}:`, error);

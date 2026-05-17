@@ -9,6 +9,8 @@ export interface Message {
   timestamp: Date
   isStreaming?: boolean
   error?: boolean
+  intent?: string
+  suggestions?: string[]
 }
 
 export interface ChatRequest {

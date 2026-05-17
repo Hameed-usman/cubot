@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { checkRateLimit } from '@/lib/ratelimit'
 import { runRAGPipeline } from '@/lib/rag'
 import { ChatRequest } from '@/types'
+import { classifyIntent, getIntentContext, getIntentSuggestions } from '@/lib/intent'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -45,26 +46,29 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       )
     }
 
-    // Step 3: Run RAG pipeline and get streaming response
-    const stream = await runRAGPipeline(body)
+    // Step 3: Classify intent and get context
+    const intent = classifyIntent(body.message)
+    const intentContext = getIntentContext(intent)
+    const suggestions = getIntentSuggestions(intent)
 
-    // Step 4: Return streaming response
-    return new NextResponse(stream, {
-      headers: {
-        'Content-Type': 'text/plain; charset=utf-8',
-        'X-Content-Type-Options': 'nosniff',
-        'Transfer-Encoding': 'chunked',
-      },
+    // Step 4: Run RAG pipeline
+    const content = await runRAGPipeline(body, intentContext)
+
+    // Step 5: Return JSON response
+    return NextResponse.json({
+      message: content,
+      intent,
+      suggestions
     })
-  } catch (error) {
+  } catch (error: any) {
     // Step 5: Catch all unhandled errors
-    console.error('Chat API error:', error)
+    console.error('[ChatRoute] API error:', error)
 
-    const errorMessage =
-      error instanceof Error ? error.message : 'Unknown error occurred'
+    const statusCode = error.statusCode || 500;
+    const errorMessage = error.message || 'Unknown error occurred';
 
-    // Check for specific error types
-    if (errorMessage.includes('rate limit')) {
+    // Check for specific error types or messages
+    if (errorMessage.includes('rate limit') || statusCode === 429) {
       return NextResponse.json(
         { error: 'Too many requests. Please try again in a moment.' },
         { status: 429 }
@@ -72,8 +76,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     return NextResponse.json(
-      { error: 'Cubot is temporarily unavailable. Please try again.' },
-      { status: 500 }
+      { error: statusCode === 500 ? 'Cubot is temporarily unavailable. Please try again.' : errorMessage },
+      { status: statusCode }
     )
   }
 }

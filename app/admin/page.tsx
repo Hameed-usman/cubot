@@ -1,8 +1,9 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { BookOpen, Save, Eye, Edit3, Trash2, Plus, CheckCircle, Loader2 } from 'lucide-react'
+import { BookOpen, Save, Eye, Edit3, Trash2, Plus, CheckCircle, Loader2, LogOut } from 'lucide-react'
 import { getDepartmentData, saveDepartmentData } from '../actions/admin'
+import { signOut } from 'next-auth/react'
 
 const departments = ['general', 'cs_it', 'bba', 'pharmacy', 'nursing']
 const departmentNames: Record<string, string> = {
@@ -84,6 +85,13 @@ export default function AdminPage() {
             >
               <Eye className="w-4 h-4" />
               {previewMode ? 'Edit Mode' : 'Preview'}
+            </button>
+            <button
+              onClick={() => signOut({ callbackUrl: '/admin/login' })}
+              className="flex items-center gap-2 px-4 py-2 bg-red-500/80 rounded-lg hover:bg-red-500 transition"
+            >
+              <LogOut className="w-4 h-4" />
+              Sign Out
             </button>
           </div>
         </div>

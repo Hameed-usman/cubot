@@ -6,9 +6,10 @@ import { motion } from 'framer-motion'
 interface MessageBubbleProps {
   message: Message
   isStreaming?: boolean
+  onSelectSuggestion?: (suggestion: string) => void
 }
 
-export function MessageBubble({ message, isStreaming }: MessageBubbleProps) {
+export function MessageBubble({ message, isStreaming, onSelectSuggestion }: MessageBubbleProps) {
   const isUser = message.role === 'user'
   const isError = message.error
 
@@ -79,7 +80,26 @@ export function MessageBubble({ message, isStreaming }: MessageBubbleProps) {
         <p className="text-xs text-slate-500 mt-2 ml-13 flex items-center gap-1">
           <Bot className="w-3 h-3 text-cu-gold" />
           {isError ? 'Error' : 'Cubot'} • {formatTime(message.timestamp)}
+          {message.intent && (
+            <span className="ml-2 px-2 py-0.5 bg-cu-blue/10 text-cu-blue font-medium rounded text-[10px] uppercase">
+              {message.intent.replace('_', ' ')}
+            </span>
+          )}
         </p>
+
+        {message.suggestions && message.suggestions.length > 0 && !isStreaming && (
+          <div className="flex flex-wrap gap-2 mt-3 ml-13">
+            {message.suggestions.map((suggestion, index) => (
+              <button
+                key={index}
+                onClick={() => onSelectSuggestion && onSelectSuggestion(suggestion)}
+                className="text-xs font-medium bg-white/70 hover:bg-cu-blue/10 text-cu-blue hover:text-cu-blue-dark px-3.5 py-1.5 rounded-full border border-cu-blue/20 hover:border-cu-blue/40 shadow-sm transition-all text-left"
+              >
+                {suggestion}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     </motion.div>
   )

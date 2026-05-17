@@ -53,40 +53,19 @@ export function ChatWindow() {
         throw new Error(errorData.error || 'Request failed')
       }
 
-      const reader = response.body?.getReader()
-      if (!reader) throw new Error('Failed to read response')
-
-      const decoder = new TextDecoder()
-      let assistantContent = ''
+      const data = await response.json()
 
       setMessages((prev) => [
         ...prev,
         {
           id: assistantMessageId,
           role: 'assistant',
-          content: '',
+          content: data.message,
+          intent: data.intent,
+          suggestions: data.suggestions,
           timestamp: new Date(),
-          isStreaming: true,
         },
       ])
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        const chunk = decoder.decode(value, { stream: true })
-        assistantContent += chunk
-        setMessages((prev) =>
-          prev.map((msg) =>
-            msg.id === assistantMessageId ? { ...msg, content: assistantContent } : msg
-          )
-        )
-      }
-
-      setMessages((prev) =>
-        prev.map((msg) =>
-          msg.id === assistantMessageId ? { ...msg, isStreaming: false } : msg
-        )
-      )
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'An error occurred'
       setError(errorMessage)
@@ -176,6 +155,7 @@ export function ChatWindow() {
               message.isStreaming &&
               message.id === messages[messages.length - 1]?.id
             }
+            onSelectSuggestion={handleSuggestedQuestion}
           />
         ))}
 
