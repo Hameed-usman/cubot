@@ -1,4 +1,36 @@
 import { ChatRequest } from '@/types'
+import * as fs from 'fs'
+import * as path from 'path'
+
+// =====================================================
+// FILE SYSTEM KNOWLEDGE BASE (DYNAMIC)
+// =====================================================
+
+function getDynamicKnowledge() {
+  try {
+    const dataDir = path.join(process.cwd(), 'data')
+    if (!fs.existsSync(dataDir)) return ''
+
+    const departments = fs.readdirSync(dataDir).filter(f => fs.statSync(path.join(dataDir, f)).isDirectory())
+    let knowledge = ''
+
+    for (const dept of departments) {
+      const deptDir = path.join(dataDir, dept)
+      const files = fs.readdirSync(deptDir).filter(f => f.endsWith('.txt'))
+      
+      for (const file of files) {
+        const content = fs.readFileSync(path.join(deptDir, file), 'utf-8')
+        if (content.trim()) {
+          knowledge += `[Department: ${dept}, File: ${file}]\n${content.trim()}\n\n`
+        }
+      }
+    }
+    return knowledge
+  } catch (error) {
+    console.error('Error reading dynamic knowledge:', error)
+    return ''
+  }
+}
 
 // =====================================================
 // LANGUAGE DETECTION
@@ -32,15 +64,6 @@ class LearningSystem {
 const learningSystem = new LearningSystem()
 
 // =====================================================
-// KNOWLEDGE BASE (SHORT)
-// =====================================================
-
-const KNOWLEDGE = {
-  urdu: `City University Peshawar - فیس: CS/IT=95000, BBA=80000, Pharmacy=108000, Nursing=82000 روپے/سیمیسٹر | داخلہ: 45% نمبرز | فون: +92-91-1234567 | پروگرام: CS, IT, BBA, Pharmacy, Nursing`,
-  english: `City University Peshawar - Fee: CS/IT=95000, BBA=80000, Pharmacy=108000, Nursing=82000 Rs/semester | Admission: 45% marks | Phone: +92-91-1234567 | Programs: CS, IT, BBA, Pharmacy, Nursing`
-}
-
-// =====================================================
 // MAIN FUNCTION
 // =====================================================
 
@@ -65,15 +88,18 @@ export async function runRAGPipeline(request: ChatRequest): Promise<ReadableStre
 
   // Get learned
   const learned = learningSystem.getRelevant(message)
-  const learnedText = learned.length > 0 ? `\nLearned: ${learned.join(' | ')}` : ''
+  const learnedText = learned.length > 0 ? `\nLearned Corrections: ${learned.join(' | ')}\n` : ''
 
   // Get conversation context
   const history = conversationHistory.slice(-3).map(h => `${h.role}: ${h.content}`).join('\n')
 
-  // Build prompt - FORCE LANGUAGE
+  // Get Dynamic Knowledge from Files
+  const dynamicKnowledge = getDynamicKnowledge()
+
+  // Build prompt
   const systemPrompt = lang === 'urdu'
-    ? `You are an AI assistant. Your ONLY response must be in Urdu script (اردو). Never respond in English. Use only Urdu characters. ${KNOWLEDGE.urdu}${learnedText}`
-    : `You are an AI assistant. Your ONLY response must be in English. Never respond in Urdu. ${KNOWLEDGE.english}${learnedText}`
+    ? `You are an AI assistant. Your ONLY response must be in Urdu script (اردو). Never respond in English. Use only Urdu characters.\nHere is the latest information from the university database:\n${dynamicKnowledge}\n${learnedText}`
+    : `You are an AI assistant. Your ONLY response must be in English. Never respond in Urdu.\nHere is the latest information from the university database:\n${dynamicKnowledge}\n${learnedText}`
 
   const prompt = `${systemPrompt}
 ${history ? `Context: ${history}\n` : ''}
