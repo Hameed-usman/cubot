@@ -1,27 +1,33 @@
 'use client'
 
-import { useState, useRef, useEffect, FormEvent } from 'react'
+import { useState, useRef, useCallback } from 'react'
 import { Message } from '@/types'
 import { MessageBubble } from './MessageBubble'
-import { ChatInput } from './ChatInput'
+import { InputBar } from './InputBar'
 import { TypingIndicator } from './TypingIndicator'
-import { SuggestedQuestions } from './SuggestedQuestions'
-import { AlertCircle, RefreshCw, Bot, Sparkles } from 'lucide-react'
-import { Button } from '@/components/ui/Button'
-import { motion } from 'framer-motion'
+import { QuickQuestions } from './QuickQuestions'
+import { AlertCircle, RefreshCw, Trash2 } from 'lucide-react'
+import { AnimatePresence, motion } from 'framer-motion'
+import { showToast } from '@/components/ui/Toast'
+import { useEffect } from 'react'
 
 export function ChatWindow() {
   const [messages, setMessages] = useState<Message[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  // Ref-based guard — prevents any double-call regardless of React batching or StrictMode
+  const isSubmittingRef = useRef(false)
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, isLoading])
 
-  const handleSubmit = async (message: string) => {
+  const handleSubmit = useCallback(async (message: string) => {
     if (!message.trim()) return
+    // Hard guard: if a request is already in-flight, ignore this call entirely
+    if (isSubmittingRef.current) return
+    isSubmittingRef.current = true
 
     const userMessage: Message = {
       id: crypto.randomUUID(),
@@ -37,20 +43,18 @@ export function ChatWindow() {
     const assistantMessageId = crypto.randomUUID()
 
     try {
-      const conversationHistory = messages.slice(-5).map((msg) => ({
-        role: msg.role,
-        content: msg.content,
-      }))
-
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message, conversationHistory }),
+        body: JSON.stringify({
+          message,
+          conversationHistory: messages.slice(-6).map(({ role, content }) => ({ role, content })),
+        }),
       })
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}))
-        throw new Error(errorData.error || 'Request failed')
+        throw new Error(errorData.error || 'Request failed. Please try again.')
       }
 
       const data = await response.json()
@@ -81,93 +85,118 @@ export function ChatWindow() {
       ])
     } finally {
       setIsLoading(false)
+      isSubmittingRef.current = false
     }
-  }
+  }, [messages])
 
-  const handleSuggestedQuestion = (question: string) => {
+  const handleSuggestedQuestion = useCallback((question: string) => {
     handleSubmit(question)
-  }
+  }, [handleSubmit])
 
-  const clearError = () => setError(null)
+  const handleClearChat = useCallback(() => {
+    setMessages([])
+    setError(null)
+    showToast({ message: 'Chat cleared ✦', duration: 2000 })
+  }, [])
+
+  const hasMessages = messages.length > 0
+
+  // Track the latest bot message ID for typewriter
+  const latestBotId = (() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'assistant') return messages[i].id
+    }
+    return null
+  })()
 
   return (
-    <motion.div 
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.5, ease: "easeOut" }}
-      className="flex flex-col h-[calc(100vh-140px)] glass-card rounded-3xl shadow-[0_8px_32px_rgba(0,61,165,0.15)] overflow-hidden border border-white/40 backdrop-blur-xl"
-    >
-      {/* Header */}
-      <div className="px-6 py-4 bg-gradient-to-r from-cu-blue/90 to-cu-blue-mid/90 backdrop-blur-md text-white border-b border-white/20">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 bg-white/20 rounded-2xl flex items-center justify-center shadow-inner backdrop-blur-sm">
-              <Bot className="w-7 h-7 text-white" />
-            </div>
-            <div>
-              <h2 className="font-bold text-lg flex items-center gap-2 tracking-wide">
-                Cubot
-                <span className="w-2.5 h-2.5 bg-green-400 rounded-full animate-pulse shadow-[0_0_10px_rgba(74,222,128,0.8)]" />
-              </h2>
-              <p className="text-white/80 text-sm flex items-center gap-1.5 font-medium">
-                <Sparkles className="w-3.5 h-3.5 text-cu-gold" />
-                AI Assistant - Online
-              </p>
-            </div>
-          </div>
-          <div className="text-right hidden sm:block">
-            <p className="text-white/90 text-xs font-semibold tracking-wider uppercase bg-white/10 px-3 py-1.5 rounded-full backdrop-blur-md">City University</p>
-          </div>
-        </div>
-      </div>
-
-      {/* Error Banner */}
-      {error && (
-        <div className="flex items-center justify-between px-4 py-3 bg-red-500/10 border-b border-red-500/20 backdrop-blur-sm">
-          <div className="flex items-center gap-2 text-red-600">
-            <AlertCircle className="w-4 h-4" />
-            <span className="text-sm font-medium">{error}</span>
-          </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={clearError}
-            className="text-red-600 border-red-200 hover:bg-red-50"
+    <div className="flex flex-col h-full">
+      {/* Toolbar */}
+      {hasMessages && (
+        <div
+          className="flex items-center justify-end px-4 py-2 flex-shrink-0 border-b"
+          style={{ borderBottomColor: 'rgba(255,255,255,0.05)' }}
+        >
+          <button
+            onClick={handleClearChat}
+            aria-label="Clear chat history"
+            className="flex items-center gap-1.5 text-xs text-white/30 hover:text-white/60 transition-colors px-2 py-1 rounded-lg hover:bg-white/5 font-sans"
           >
-            <RefreshCw className="w-4 h-4 mr-1" />
-            Dismiss
-          </Button>
+            <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
+            Clear chat
+          </button>
         </div>
       )}
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-gradient-to-b from-white/40 to-white/60">
-        {messages.length === 0 && !isLoading && (
-          <SuggestedQuestions onSelect={handleSuggestedQuestion} />
+      {/* Error Banner */}
+      <AnimatePresence>
+        {error && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            className="flex items-center justify-between px-4 py-3 bg-red-950/40 border-b border-red-500/20 flex-shrink-0"
+          >
+            <div className="flex items-center gap-2 text-red-400 text-sm font-sans">
+              <AlertCircle className="w-4 h-4 flex-shrink-0" aria-hidden="true" />
+              <span>{error}</span>
+            </div>
+            <button
+              onClick={() => setError(null)}
+              aria-label="Dismiss error"
+              className="flex items-center gap-1 text-xs text-red-400/70 hover:text-red-400 transition-colors px-2 py-1 rounded border border-red-500/20 hover:border-red-500/40 font-sans ml-3 flex-shrink-0"
+            >
+              <RefreshCw className="w-3 h-3" aria-hidden="true" />
+              Dismiss
+            </button>
+          </motion.div>
         )}
+      </AnimatePresence>
 
-        {messages.map((message) => (
-          <MessageBubble
-            key={message.id}
-            message={message}
-            isStreaming={
-              message.role === 'assistant' &&
-              message.isStreaming &&
-              message.id === messages[messages.length - 1]?.id
-            }
-            onSelectSuggestion={handleSuggestedQuestion}
-          />
-        ))}
+      {/* Messages */}
+      <main
+        id="chat-messages"
+        aria-label="Chat messages"
+        aria-live="polite"
+        className="flex-1 overflow-y-auto px-4 py-5 space-y-5"
+      >
+        <AnimatePresence>
+          {!hasMessages && !isLoading && (
+            <motion.div
+              key="quick-questions"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0, scale: 0.97, transition: { duration: 0.2 } }}
+            >
+              <QuickQuestions onSelect={handleSuggestedQuestion} />
+            </motion.div>
+          )}
+        </AnimatePresence>
 
-        {isLoading && messages.length > 0 && <TypingIndicator />}
+        <AnimatePresence initial={false}>
+          {messages.map((message) => (
+            <MessageBubble
+              key={message.id}
+              message={message}
+              isLatestBot={message.id === latestBotId && message.role === 'assistant' && !isLoading}
+              onSelectSuggestion={handleSuggestedQuestion}
+            />
+          ))}
+        </AnimatePresence>
 
-        <div ref={messagesEndRef} />
-      </div>
+        <AnimatePresence>
+          {isLoading && hasMessages && (
+            <motion.div key="typing" exit={{ opacity: 0 }}>
+              <TypingIndicator />
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <div ref={messagesEndRef} aria-hidden="true" />
+      </main>
 
       {/* Input */}
-      <div className="bg-white/80 backdrop-blur-md border-t border-white/50">
-        <ChatInput onSubmit={handleSubmit} isLoading={isLoading} disabled={isLoading} />
-      </div>
-    </motion.div>
+      <InputBar onSubmit={handleSubmit} isLoading={isLoading} disabled={isLoading} />
+    </div>
   )
 }

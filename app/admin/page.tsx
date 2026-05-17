@@ -1,7 +1,11 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { BookOpen, Save, Eye, Edit3, Trash2, Plus, CheckCircle, Loader2, LogOut } from 'lucide-react'
+import {
+  BookOpen, Save, Eye, Edit3, Trash2, Plus, CheckCircle,
+  Loader2, LogOut, GraduationCap, Cpu, BarChart3, FileText,
+  Layers, Users, DollarSign, Calendar, ChevronRight
+} from 'lucide-react'
 import { getDepartmentData, saveDepartmentData } from '../actions/admin'
 import { signOut } from 'next-auth/react'
 
@@ -11,8 +15,20 @@ const departmentNames: Record<string, string> = {
   cs_it: 'Computer Science & IT',
   bba: 'Business Administration',
   pharmacy: 'Pharmacy',
-  nursing: 'Nursing'
+  nursing: 'Nursing',
 }
+const departmentColors: Record<string, string> = {
+  general: 'bg-cu-navy', cs_it: 'bg-cu-gold', bba: 'bg-emerald-700',
+  pharmacy: 'bg-purple-700', nursing: 'bg-rose-700',
+}
+
+const sections = [
+  { id: 'overview', label: 'Overview', icon: BarChart3 },
+  { id: 'courses', label: 'Courses', icon: Layers },
+  { id: 'fees', label: 'Fee Structure', icon: DollarSign },
+  { id: 'semesters', label: 'Semesters', icon: Calendar },
+  { id: 'faculty', label: 'Faculty', icon: Users },
+]
 
 export default function AdminPage() {
   const [selectedDept, setSelectedDept] = useState('general')
@@ -22,16 +38,7 @@ export default function AdminPage() {
   const [isSaving, setIsSaving] = useState(false)
   const [previewMode, setPreviewMode] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
-
-  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-
-  const sections = [
-    { id: 'overview', label: 'Overview', icon: BookOpen },
-    { id: 'courses', label: 'Courses', icon: BookOpen },
-    { id: 'fees', label: 'Fee Structure', icon: BookOpen },
-    { id: 'semesters', label: 'Semesters', icon: BookOpen },
-    { id: 'faculty', label: 'Faculty', icon: BookOpen },
-  ]
+  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     async function loadData() {
@@ -47,187 +54,194 @@ export default function AdminPage() {
     setIsSaving(true)
     const result = await saveDepartmentData(selectedDept, activeSection, contentToSave)
     setIsSaving(false)
-    if (result.success) {
-      setSaved(true)
-      setTimeout(() => setSaved(false), 2000)
-    }
+    if (result.success) { setSaved(true); setTimeout(() => setSaved(false), 2000) }
   }
 
   const handleContentChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const newContent = e.target.value
     setContent(newContent)
-
-    // Auto-save debounce
-    if (saveTimeoutRef.current) {
-      clearTimeout(saveTimeoutRef.current)
-    }
-    saveTimeoutRef.current = setTimeout(() => {
-      handleSave(newContent)
-    }, 1000)
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current)
+    saveTimeoutRef.current = setTimeout(() => handleSave(newContent), 1200)
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
-      {/* Header */}
-      <header className="bg-cu-blue text-white py-6 px-4 shadow-lg">
-        <div className="max-w-6xl mx-auto flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold flex items-center gap-2">
-              <BookOpen className="w-8 h-8" />
-              Cubot Admin Panel
-            </h1>
-            <p className="text-white/70 text-sm">Manage your chatbot knowledge base</p>
-          </div>
+    <div className="min-h-screen flex flex-col" style={{ background: 'linear-gradient(160deg,#080d1a 0%,#0d1526 60%,#080d1a 100%)' }}>
+
+      {/* Top header */}
+      <header className="flex-shrink-0 glass-dark border-b px-6 py-4" style={{ borderBottomColor: 'rgba(255,255,255,0.08)' }}>
+        <div className="max-w-7xl mx-auto flex items-center justify-between gap-4">
           <div className="flex items-center gap-4">
-            <button
-              onClick={() => setPreviewMode(!previewMode)}
-              className="flex items-center gap-2 px-4 py-2 bg-white/20 rounded-lg hover:bg-white/30 transition"
-            >
-              <Eye className="w-4 h-4" />
-              {previewMode ? 'Edit Mode' : 'Preview'}
+            <div className="w-10 h-10 rounded-2xl bg-cu-navy flex items-center justify-center shadow-navy-glow flex-shrink-0">
+              <GraduationCap className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <h1 className="font-display font-extrabold text-white text-lg leading-tight">Cubot Admin</h1>
+              <div className="flex items-center gap-1.5 text-xs text-white/30 font-sans">
+                <Cpu className="w-3 h-3 text-cu-gold/60" />
+                IT &amp; Robotics Society — CUSIT
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <span className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold font-display"
+              style={{ background: 'rgba(52,211,153,0.1)', border: '1px solid rgba(52,211,153,0.2)', color: 'rgba(52,211,153,0.9)' }}>
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              System Online
+            </span>
+            <button onClick={() => setPreviewMode(!previewMode)} aria-label="Toggle preview mode"
+              className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold font-display transition-all"
+              style={{ background: previewMode ? 'rgba(201,162,39,0.15)' : 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: previewMode ? '#c9a227' : 'rgba(255,255,255,0.6)' }}>
+              {previewMode ? <Edit3 className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              {previewMode ? 'Edit' : 'Preview'}
             </button>
-            <button
-              onClick={() => signOut({ callbackUrl: '/admin/login' })}
-              className="flex items-center gap-2 px-4 py-2 bg-red-500/80 rounded-lg hover:bg-red-500 transition"
-            >
+            <button onClick={() => signOut({ callbackUrl: '/admin/login' })} aria-label="Sign out"
+              className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold font-sans transition-all text-red-400 hover:text-red-300"
+              style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.15)' }}>
               <LogOut className="w-4 h-4" />
-              Sign Out
+              <span className="hidden sm:inline">Sign Out</span>
             </button>
           </div>
         </div>
       </header>
 
-      <div className="max-w-6xl mx-auto p-4 md:p-8">
-        <div className="grid md:grid-cols-4 gap-6">
-          {/* Sidebar - Departments */}
-          <div className="md:col-span-1">
-            <div className="glass-card rounded-2xl p-4 sticky top-8">
-              <h3 className="font-bold text-cu-dark mb-4 flex items-center gap-2">
-                <Edit3 className="w-4 h-4" />
-                Departments
-              </h3>
-              <div className="space-y-2">
+      {/* Body */}
+      <div className="flex-1 max-w-7xl mx-auto w-full px-4 py-6 md:px-6 md:py-8">
+        <div className="grid md:grid-cols-4 gap-6 h-full">
+
+          {/* Sidebar */}
+          <aside className="md:col-span-1">
+            <div className="glass-dark rounded-3xl p-4 sticky top-8" style={{ border: '1px solid rgba(255,255,255,0.08)' }}>
+              <p className="text-[10px] uppercase tracking-widest text-white/30 font-sans font-semibold px-2 mb-3">Departments</p>
+              <nav className="space-y-1" aria-label="Department navigation">
                 {departments.map((dept) => (
-                  <button
-                    key={dept}
-                    onClick={() => {
-                      setSelectedDept(dept)
-                      setActiveSection('overview')
-                    }}
-                    className={`w-full text-left px-4 py-3 rounded-xl transition-all ${
-                      selectedDept === dept
-                        ? 'bg-cu-blue text-white'
-                        : 'text-slate-600 hover:bg-slate-100'
-                    }`}
-                  >
-                    {departmentNames[dept]}
+                  <button key={dept} onClick={() => { setSelectedDept(dept); setActiveSection('overview') }}
+                    aria-label={`Select ${departmentNames[dept]}`}
+                    className="w-full text-left px-4 py-3 rounded-2xl transition-all flex items-center gap-3 group"
+                    style={{
+                      background: selectedDept === dept ? 'rgba(26,58,143,0.4)' : 'transparent',
+                      border: selectedDept === dept ? '1px solid rgba(26,58,143,0.5)' : '1px solid transparent',
+                      color: selectedDept === dept ? '#fff' : 'rgba(255,255,255,0.45)',
+                    }}>
+                    <div className={`w-2 h-2 rounded-full flex-shrink-0 ${departmentColors[dept]}`} />
+                    <span className="text-sm font-sans font-medium flex-1">{departmentNames[dept]}</span>
+                    {selectedDept === dept && <ChevronRight className="w-3.5 h-3.5 text-cu-gold" />}
                   </button>
                 ))}
-              </div>
-            </div>
-          </div>
+              </nav>
 
-          {/* Main Content */}
-          <div className="md:col-span-3">
-            {/* Section Tabs */}
-            <div className="glass-card rounded-2xl p-4 mb-6">
-              <div className="flex flex-wrap gap-2">
-                {sections.map((section) => (
-                  <button
-                    key={section.id}
-                    onClick={() => setActiveSection(section.id)}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all ${
-                      activeSection === section.id
-                        ? 'bg-cu-blue text-white'
-                        : 'text-slate-600 hover:bg-slate-100'
-                    }`}
-                  >
-                    <section.icon className="w-4 h-4" />
-                    {section.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Editor / Preview */}
-            <div className="glass-card rounded-2xl p-6 relative">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="font-bold text-lg text-cu-dark">
-                  {departmentNames[selectedDept]} - {activeSection.charAt(0).toUpperCase() + activeSection.slice(1)}
-                </h3>
-                <button
-                  onClick={() => handleSave(content)}
-                  disabled={isSaving}
-                  className={`flex items-center gap-2 px-6 py-2 rounded-xl font-medium transition-all ${
-                    saved
-                      ? 'bg-green-500 text-white'
-                      : isSaving
-                      ? 'bg-cu-gold/70 text-cu-dark cursor-not-allowed'
-                      : 'bg-cu-gold text-cu-dark hover:bg-cu-gold/90'
-                  }`}
-                >
-                  {saved ? (
-                    <>
-                      <CheckCircle className="w-4 h-4" />
-                      Saved!
-                    </>
-                  ) : isSaving ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      Saving...
-                    </>
-                  ) : (
-                    <>
-                      <Save className="w-4 h-4" />
-                      Save Changes
-                    </>
-                  )}
+              <div className="mt-6 pt-5" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                <p className="text-[10px] uppercase tracking-widest text-white/20 font-sans font-semibold px-2 mb-3">Actions</p>
+                <button aria-label="Add new department"
+                  className="w-full flex items-center gap-2 px-4 py-2.5 rounded-2xl text-sm font-sans transition-all text-white/40 hover:text-white/70"
+                  style={{ border: '1px dashed rgba(255,255,255,0.12)' }}>
+                  <Plus className="w-4 h-4" />Add Department
                 </button>
+                <button aria-label="Reset to default"
+                  className="w-full flex items-center gap-2 px-4 py-2.5 rounded-2xl text-sm font-sans transition-all text-red-400/50 hover:text-red-400 mt-1"
+                  style={{ border: '1px dashed rgba(239,68,68,0.15)' }}>
+                  <Trash2 className="w-4 h-4" />Reset Default
+                </button>
+              </div>
+            </div>
+          </aside>
+
+          {/* Main editor */}
+          <main className="md:col-span-3 flex flex-col gap-5" aria-label="Knowledge base editor">
+
+            {/* Section tabs */}
+            <div className="glass-dark rounded-3xl p-3 flex flex-wrap gap-2" style={{ border: '1px solid rgba(255,255,255,0.08)' }}>
+              {sections.map((section) => {
+                const Icon = section.icon
+                const active = activeSection === section.id
+                return (
+                  <button key={section.id} onClick={() => setActiveSection(section.id)}
+                    aria-label={`Switch to ${section.label} section`}
+                    className="flex items-center gap-2 px-4 py-2.5 rounded-2xl text-sm font-semibold font-display transition-all"
+                    style={{
+                      background: active ? 'rgba(26,58,143,0.5)' : 'transparent',
+                      border: active ? '1px solid rgba(26,58,143,0.6)' : '1px solid transparent',
+                      color: active ? '#fff' : 'rgba(255,255,255,0.4)',
+                    }}>
+                    <Icon className="w-4 h-4" aria-hidden="true" />
+                    {section.label}
+                    {active && <span className="w-1.5 h-1.5 rounded-full bg-cu-gold" />}
+                  </button>
+                )
+              })}
+            </div>
+
+            {/* Editor card */}
+            <div className="glass-dark rounded-3xl p-6 flex flex-col gap-4 flex-1" style={{ border: '1px solid rgba(255,255,255,0.08)' }}>
+              <div className="flex items-center justify-between flex-wrap gap-3">
+                <div>
+                  <h2 className="font-display font-bold text-white text-lg">
+                    {departmentNames[selectedDept]}
+                    <span className="mx-2 text-white/20">/</span>
+                    <span className="text-cu-gold">{activeSection.charAt(0).toUpperCase() + activeSection.slice(1)}</span>
+                  </h2>
+                  <p className="text-xs text-white/30 font-sans mt-0.5">Edit knowledge base content — changes affect Cubot's responses instantly</p>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-white/25 font-sans">{content.length} chars</span>
+                  <button onClick={() => handleSave(content)} disabled={isSaving} aria-label="Save changes"
+                    className="flex items-center gap-2 px-5 py-2.5 rounded-2xl font-bold font-display text-sm transition-all"
+                    style={{
+                      background: saved ? 'rgba(52,211,153,0.15)' : isSaving ? 'rgba(201,162,39,0.2)' : '#c9a227',
+                      border: saved ? '1px solid rgba(52,211,153,0.3)' : '1px solid transparent',
+                      color: saved ? 'rgb(52,211,153)' : isSaving ? '#c9a227' : '#080d1a',
+                      cursor: isSaving ? 'not-allowed' : 'pointer',
+                    }}>
+                    {saved ? <><CheckCircle className="w-4 h-4" />Saved!</> :
+                      isSaving ? <><Loader2 className="w-4 h-4 animate-spin" />Saving…</> :
+                        <><Save className="w-4 h-4" />Save Changes</>}
+                  </button>
+                </div>
               </div>
 
               {isLoading ? (
-                <div className="w-full h-[400px] flex items-center justify-center border-2 border-slate-200 rounded-xl bg-slate-50/50">
-                   <Loader2 className="w-8 h-8 animate-spin text-cu-blue" />
+                <div className="flex-1 min-h-[400px] flex flex-col items-center justify-center gap-3 rounded-2xl"
+                  style={{ border: '1px solid rgba(255,255,255,0.06)' }}>
+                  <Loader2 className="w-8 h-8 animate-spin text-cu-gold" />
+                  <span className="text-white/30 text-sm font-sans">Loading content…</span>
                 </div>
               ) : previewMode ? (
-                <div className="bg-slate-50 rounded-xl p-6 min-h-[400px]">
-                  <h4 className="font-bold text-cu-dark mb-4">Preview how users will see this:</h4>
-                  <div className="bg-white rounded-xl p-6 shadow-sm border glass-card slide-in">
-                    <h5 className="font-bold text-cu-blue mb-2">{departmentNames[selectedDept]}</h5>
-                    <p className="text-slate-700 whitespace-pre-line leading-relaxed">{content || 'No content provided yet.'}</p>
+                <div className="flex-1 min-h-[400px] rounded-2xl p-6 overflow-auto" style={{ background: 'rgba(26,58,143,0.05)', border: '1px solid rgba(26,58,143,0.2)' }}>
+                  <div className="flex items-center gap-2 mb-4 text-xs text-white/30 font-sans">
+                    <Eye className="w-3.5 h-3.5" />
+                    Preview — how Cubot will use this content
+                  </div>
+                  <div className="glass-dark rounded-2xl p-5" style={{ border: '1px solid rgba(255,255,255,0.08)' }}>
+                    <p className="text-xs font-bold text-cu-gold font-display mb-1">Cubot</p>
+                    <p className="text-white/70 whitespace-pre-line leading-relaxed text-sm font-sans">
+                      {content || <span className="text-white/25 italic">No content yet — switch to Edit mode to add content.</span>}
+                    </p>
                   </div>
                 </div>
               ) : (
-                <textarea
-                  value={content}
-                  onChange={handleContentChange}
-                  placeholder={`Enter ${activeSection} information here...`}
-                  className="w-full h-[400px] p-4 border-2 border-slate-200 rounded-xl focus:border-cu-blue focus:outline-none resize-none text-slate-700 leading-relaxed bg-white/50 backdrop-blur-sm transition-all"
-                />
+                <div className="flex-1 relative">
+                  <div className="flex items-center gap-2 mb-2">
+                    <FileText className="w-3.5 h-3.5 text-white/25" />
+                    <span className="text-xs text-white/25 font-sans">Use plain text. Line breaks separate paragraphs.</span>
+                  </div>
+                  <textarea
+                    value={content}
+                    onChange={handleContentChange}
+                    placeholder={`Enter ${activeSection} information for ${departmentNames[selectedDept]}…`}
+                    aria-label={`Edit ${activeSection} content for ${departmentNames[selectedDept]}`}
+                    className="w-full min-h-[400px] p-5 rounded-2xl resize-none text-sm font-sans leading-relaxed focus:outline-none transition-all"
+                    style={{
+                      background: 'rgba(255,255,255,0.03)',
+                      border: '1px solid rgba(255,255,255,0.08)',
+                      color: 'rgba(255,255,255,0.8)',
+                    }}
+                  />
+                  <p className="text-xs text-white/20 font-sans mt-2">✦ Auto-saves 1.2s after you stop typing</p>
+                </div>
               )}
-
-              <div className="mt-4 flex items-center justify-between text-sm text-slate-500">
-                <span>💡 Tip: Changes are auto-saved as you type. Use line breaks to separate different points.</span>
-                <span>Characters: {content.length}</span>
-              </div>
             </div>
-
-            {/* Quick Actions */}
-            <div className="mt-6 grid md:grid-cols-3 gap-4">
-              <button className="flex items-center justify-center gap-2 p-4 bg-white rounded-xl border-2 border-dashed border-slate-300 hover:border-cu-blue hover:bg-cu-blue/5 transition-all">
-                <Plus className="w-5 h-5 text-slate-500" />
-                <span className="text-slate-600">Add New Department</span>
-              </button>
-              <button className="flex items-center justify-center gap-2 p-4 bg-white rounded-xl border-2 border-dashed border-slate-300 hover:border-cu-gold hover:bg-cu-gold/5 transition-all">
-                <Eye className="w-5 h-5 text-slate-500" />
-                <span className="text-slate-600">View All Data</span>
-              </button>
-              <button className="flex items-center justify-center gap-2 p-4 bg-white rounded-xl border-2 border-dashed border-slate-300 hover:border-red-400 hover:bg-red-50 transition-all">
-                <Trash2 className="w-5 h-5 text-slate-500" />
-                <span className="text-slate-600">Reset to Default</span>
-              </button>
-            </div>
-          </div>
+          </main>
         </div>
       </div>
     </div>
