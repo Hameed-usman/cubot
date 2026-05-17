@@ -1,4 +1,4 @@
-simport Link from 'next/link'
+import Link from 'next/link'
 import { Bot, GraduationCap, Cpu } from 'lucide-react'
 
 export function Footer() {
