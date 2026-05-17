@@ -29,7 +29,7 @@ export function Footer() {
         {/* Bottom row */}
         <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
           <p className="text-xs text-white/25 font-sans">
-            © 2025 City University Peshawar. All rights reserved.
+            © 2026 City University Peshawar. All rights reserved.
           </p>
           <div className="flex items-center gap-1.5 text-xs text-white/25 font-sans">
             <Cpu className="w-3 h-3 text-cu-gold/40" aria-hidden="true" />
