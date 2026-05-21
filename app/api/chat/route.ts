@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { checkRateLimit } from '@/lib/ratelimit'
 import { runRAGPipeline } from '@/lib/rag'
 import { ChatRequest } from '@/types'
-import { classifyIntent, getIntentContext, getIntentSuggestions } from '@/lib/intent'
+import { classifyIntent, getIntentContext } from '@/lib/intent'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -49,16 +49,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // Step 3: Classify intent and get context
     const intent = classifyIntent(body.message)
     const intentContext = getIntentContext(intent)
-    const suggestions = getIntentSuggestions(intent)
 
     // Step 4: Run RAG pipeline (returns {content, citations, confidence})
     const ragResult = await runRAGPipeline(body, intentContext)
 
-    // Step 5: Return JSON response with citations and confidence
+    // Step 5: Return JSON response with citations, confidence, and dynamic suggestions
     return NextResponse.json({
       message: ragResult.content,
       intent,
-      suggestions,
+      suggestions: ragResult.suggestions,
       citations: ragResult.citations,
       confidence: ragResult.confidence,
     })

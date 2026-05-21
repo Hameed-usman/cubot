@@ -13,8 +13,8 @@ import { RankedChunk, ChunkMetadata, Citation, ConfidenceLevel } from '@/types'
  * 4. Returns unified ranked list
  */
 
-const TOP_K_VECTOR = 20    // Retrieve more candidates before reranking
-const TOP_K_KEYWORD = 20
+const TOP_K_VECTOR = 50    // Retrieve more candidates before reranking
+const TOP_K_KEYWORD = 50
 const RRF_K = 60           // RRF constant (higher = less aggressive ranking)
 
 // ─── Vector Search ─────────────────────────────────────────────────────────────
@@ -182,7 +182,7 @@ export interface RetrievalResult {
   confidence: ConfidenceLevel
 }
 
-export async function hybridRetrieve(query: string, topK: number = 20): Promise<RetrievalResult> {
+export async function hybridRetrieve(query: string, topK: number = 50): Promise<RetrievalResult> {
   const pineconeAvailable = !!pineconeIndex.get()
 
   let merged: RankedChunk[] = []

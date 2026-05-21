@@ -16,7 +16,7 @@ import { processDocument } from './document-processor'
 
 const BASE_URL = 'https://www.cusit.edu.pk'
 const ALLOWED_DOMAINS = ['cusit.edu.pk', 'www.cusit.edu.pk']
-const MAX_PAGES = parseInt(process.env.CRAWLER_MAX_PAGES || '500')
+const MAX_PAGES = parseInt(process.env.CRAWLER_MAX_PAGES || '2500')
 const CONCURRENCY = parseInt(process.env.CRAWLER_CONCURRENCY || '5')
 const REQUEST_DELAY_MS = parseInt(process.env.CRAWLER_DELAY_MS || '800')
 const DRY_RUN = process.env.DRY_RUN === 'true'
@@ -398,6 +398,11 @@ const SEED_URLS = [
   'https://www.cusit.edu.pk',
   'https://cusit.edu.pk/cusitnew/cs/faculty.php',
   'https://cusit.edu.pk/cusitnew/se/faculty.php',
+  'https://cusit.edu.pk/cusitnew/bba/faculty.php',
+  'https://cusit.edu.pk/cusitnew/pharmacy/faculty.php',
+  'https://cusit.edu.pk/cusitnew/nursing/faculty.php',
+  'https://cusit.edu.pk/cusitnew/civil/faculty.php',
+  'https://cusit.edu.pk/cusitnew/electrical/faculty.php',
   'https://cusit.edu.pk/admissions.php',
 ]
 

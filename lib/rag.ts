@@ -105,6 +105,7 @@ export interface RAGResult {
   content: string
   citations: Citation[]
   confidence: ConfidenceLevel
+  suggestions: string[]
 }
 
 async function rewriteQuery(
@@ -196,6 +197,7 @@ export async function runRAGPipeline(
       content: lang === 'urdu' ? 'شکریہ! اپڈیٹ ہو گیا۔' : 'Thank you! Updated.',
       citations: [],
       confidence: 'high',
+      suggestions: [],
     }
   }
 
@@ -206,9 +208,13 @@ export async function runRAGPipeline(
   // ── Query Rewriting ──────────────────────────────────────────────────────────
   const searchOptimizedQuery = await rewriteQuery(message, conversationHistory, apiKey)
 
+  // ── Dynamic retrieval limit for list/aggregation queries ────────────────────
+  const isListQuery = /all|list|multiple|who are|teachers|faculty|professors|staff/i.test(message)
+  const topNChunks = isListQuery ? 15 : 5
+
   // ── Hybrid retrieval + reranking using optimized query ──────────────────────
-  const { chunks: rawChunks, citations, confidence } = await hybridRetrieve(searchOptimizedQuery, 20)
-  const rerankedChunks = rerank(searchOptimizedQuery, rawChunks, 5)
+  const { chunks: rawChunks, citations, confidence } = await hybridRetrieve(searchOptimizedQuery, 50)
+  const rerankedChunks = rerank(searchOptimizedQuery, rawChunks, topNChunks)
 
   // ── Build context ───────────────────────────────────────────────────────────
   const knowledgeContext = buildKnowledgeContext(rerankedChunks)
@@ -228,40 +234,48 @@ You are not an AI assistant or a chatbot. You are a real human academic advisor 
    - "That's a very common question, and I'd love to explain..."
    - "That is a fantastic career choice! Let me share the details with you..."
 3. Absolutely Human: BANNED phrases include "Based on the retrieved context," "According to the database," "As an AI model," "in the system data," or "as a chatbot". Never reference how you got the information. Speak as if you naturally know it because you are a senior advisor at the campus.
-4. Factual Integrity & Guardrails: ONLY answer using information from the VERIFIED UNIVERSITY KNOWLEDGE BASE below. If the information is not in the knowledge base, do not fabricate details. Reassure the user and direct them to contact CUSIT admissions/administration directly.
+4. STRICT ANTI-HALLUCINATION GUARD: If the user asks about a specific program, degree, department, or person (e.g., "BS Law"), you MUST verify that this EXACT program exists in the VERIFIED UNIVERSITY KNOWLEDGE BASE below. If the specific program/entity is NOT explicitly mentioned in the context, you MUST honestly state that the university does not appear to offer it or that you don't have information on it. Do NOT guess or hallucinate criteria.
+5. Factual Integrity & Guardrails: ONLY answer using information from the VERIFIED UNIVERSITY KNOWLEDGE BASE below. If the information is not in the knowledge base, do not fabricate details. Reassure the user and direct them to contact CUSIT admissions/administration directly.
 
 ⚖️ RESPONSE LENGTH INTELLIGENCE:
 Dynamically adjust your response length based on what the user needs:
 - SIMPLE FACTUAL (fee, location, contact, simple deadlines): 2-4 sentences. Give the answer directly, wrapped in a friendly, conversational sentence.
 - MODERATE (admissions process, course eligibility, departments): 2-3 short, clean paragraphs. Use bullet points only if it makes reading easier for a stressed applicant.
 - COMPLEX DECISION (career advice, program comparisons, scholarships): Max 3 small sections. Provide clear advice and end with encouragement.
+- LISTS & AGGREGATIONS (faculty, teachers, available programs): Provide a comprehensive, well-formatted bulleted list of all the relevant entities retrieved in the context. Do not truncate the list arbitrarily.
 
 🎯 CITATION STYLE:
 If referencing sources, do so naturally as a human advisor would:
 - "According to our official admissions guidelines..."
 - "Our computer science faculty records show that..."
 - "Our fee structure page lists the cost as..."
+- For lists, you can say: "Here is the list of our esteemed faculty members according to our records:"
 Do NOT use robotic links or text like "According to document X".
 
-🧭 CONVERSATION FLOW:
-Every response must:
-1. Reassure or greet the user warmly if they are starting or asking something new.
-2. Answer the question directly and accurately.
-3. Offer a helpful, relevant extra insight (e.g., a deadline hint, contact email, or next step).
-4. End with a supportive, open-ended question or call to action (e.g., "Would you like me to help you calculate the semester fee, or guide you through the online application steps?").
+🧭 CONVERSATION FLOW & OUTPUT FORMAT:
+You MUST output your final answer as a JSON object.
+Your JSON must strictly contain two keys:
+1. "response": Your full, formatted conversational answer (string, use markdown). Follow all persona guidelines. End with a supportive, open-ended question or call to action.
+2. "suggestions": An array of 2 to 3 dynamic, highly relevant follow-up questions that the user might want to ask next based on your response (array of strings).
+
+Example Output:
+{
+  "response": "Hello! I'd be glad to help you clear that up... [your full response]",
+  "suggestions": ["What is the fee structure?", "How do I apply?"]
+}
 
 === VERIFIED UNIVERSITY KNOWLEDGE BASE ===
 ${knowledgeContext || 'No specific knowledge retrieved for this query.'}
 ${learnedText}`
 
   const systemPrompt = lang === 'urdu'
-    ? `${baseAriaPrompt}\n\nCRITICAL: Respond in Urdu script (اردو) ONLY. Translate the tone and facts perfectly into natural Urdu.\n\n${intentContext}${hallucinationGuard}${citationInstruction}`
+    ? `${baseAriaPrompt}\n\nCRITICAL: Respond in Urdu script (اردو) ONLY. Translate the tone and facts perfectly into natural Urdu. (The JSON keys "response" and "suggestions" must remain in English, but their values must be in Urdu).\n\n${intentContext}${hallucinationGuard}${citationInstruction}`
     : `${baseAriaPrompt}\n\nCRITICAL: Respond in English ONLY.\n\n${intentContext}${hallucinationGuard}${citationInstruction}`
 
   const prompt = `${systemPrompt}
 ${conversationHistory3 ? `\nConversation context:\n${conversationHistory3}\n` : ''}
 User question: ${message}
-Answer (${lang === 'urdu' ? 'URDU ONLY' : 'ENGLISH ONLY'}):`
+Answer (${lang === 'urdu' ? 'URDU ONLY' : 'ENGLISH ONLY'}, MUST BE VALID JSON):`
 
   // ── Groq API call ───────────────────────────────────────────────────────────
   try {
@@ -274,8 +288,9 @@ Answer (${lang === 'urdu' ? 'URDU ONLY' : 'ENGLISH ONLY'}):`
       body: JSON.stringify({
         model: 'llama-3.3-70b-versatile',
         messages: [{ role: 'user', content: prompt }],
-        temperature: 0.4,   // Lower temp = less hallucination, more factual
-        max_tokens: 600,
+        temperature: 0.2,   // Lower temp = strictly factual, reliable JSON
+        max_tokens: 1000,
+        response_format: { type: 'json_object' },
       }),
     })
 
@@ -285,14 +300,27 @@ Answer (${lang === 'urdu' ? 'URDU ONLY' : 'ENGLISH ONLY'}):`
     }
 
     const data = await response.json()
-    const content = data.choices?.[0]?.message?.content || ''
+    const contentStr = data.choices?.[0]?.message?.content || '{}'
+    
+    let parsedContent = ''
+    let parsedSuggestions: string[] = []
+    
+    try {
+      const parsed = JSON.parse(contentStr)
+      parsedContent = parsed.response || ''
+      parsedSuggestions = Array.isArray(parsed.suggestions) ? parsed.suggestions : []
+    } catch (parseErr) {
+      console.error('[Groq] JSON Parse Error:', parseErr, contentStr)
+      parsedContent = contentStr // fallback
+    }
 
     return {
-      content: content || (lang === 'urdu'
+      content: parsedContent || (lang === 'urdu'
         ? 'معذرت، ابھی جواب دینے میں دشواری ہو رہی ہے۔ دوبارہ کوشش کریں۔'
         : 'I\'m having trouble responding right now. Please try again.'),
       citations,
       confidence,
+      suggestions: parsedSuggestions,
     }
   } catch (error: any) {
     console.error('[Groq] Error:', error)
@@ -302,6 +330,7 @@ Answer (${lang === 'urdu' ? 'URDU ONLY' : 'ENGLISH ONLY'}):`
         : 'I\'m having trouble connecting right now. Please try again in a moment.',
       citations: [],
       confidence: 'no_data',
+      suggestions: [],
     }
   }
 }
