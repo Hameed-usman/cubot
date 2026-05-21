@@ -11,6 +11,8 @@ export interface Message {
   error?: boolean
   intent?: string
   suggestions?: string[]
+  citations?: Citation[]
+  confidence?: ConfidenceLevel
 }
 
 export interface ChatRequest {
@@ -22,7 +24,18 @@ export interface ChatRequest {
 export interface ChatResponse {
   content: string
   sources?: PineconeMatch[]
+  citations?: Citation[]
+  confidence?: ConfidenceLevel
 }
+
+export interface Citation {
+  title: string
+  url: string
+  pageType: PageType
+  category: string
+}
+
+export type ConfidenceLevel = 'high' | 'medium' | 'low' | 'no_data'
 
 // ─── RAG Pipeline ─────────────────────────────────────────────────
 
@@ -32,17 +45,63 @@ export interface PineconeMatch {
   metadata: ChunkMetadata
 }
 
+/**
+ * Rich metadata attached to every chunk stored in Pinecone and PostgreSQL.
+ * This metadata powers classification, filtering, citations, and observability.
+ */
 export interface ChunkMetadata {
   text: string
-  department: Department
-  fileName: string
+  title: string
+  sourceUrl: string
+  department: string
+  category: string
+  pageType: PageType
+  breadcrumb: string
+  sourceType: SourceType
+  contentHash: string
+  crawledAt: string
+  lastModified?: string
   chunkIndex: number
+  totalChunks: number
 }
+
+/**
+ * Classification of page content type.
+ * Used for targeted retrieval and citation display.
+ */
+export type PageType =
+  | 'notice'
+  | 'faculty'
+  | 'department'
+  | 'policy'
+  | 'admissions'
+  | 'alumni'
+  | 'event'
+  | 'contact'
+  | 'academic'
+  | 'scholarship'
+  | 'general'
+
+/**
+ * Origin type of a knowledge chunk.
+ */
+export type SourceType = 'webpage' | 'pdf' | 'docx' | 'xlsx' | 'manual'
 
 export interface RAGContext {
   query: string
-  retrievedChunks: PineconeMatch[]
+  retrievedChunks: RankedChunk[]
   augmentedPrompt: string
+  citations: Citation[]
+  confidence: ConfidenceLevel
+}
+
+export interface RankedChunk {
+  id: string
+  score: number           // vector similarity score
+  bm25Score?: number      // keyword search score
+  rrfScore?: number       // reciprocal rank fusion score
+  rerankScore?: number    // final rerank score
+  metadata: ChunkMetadata
 }
 
 // ─── Ingestion ────────────────────────────────────────────────────
@@ -62,7 +121,32 @@ export interface IngestResult {
 
 export interface TextChunk {
   text: string
-  metadata: ChunkMetadata
+  metadata: Omit<ChunkMetadata, 'text'>
+}
+
+export interface CrawlStats {
+  runId: string
+  pagesCrawled: number
+  pagesFailed: number
+  pagesUpdated: number
+  pagesSkipped: number
+  documentsProcessed: number
+  chunksCreated: number
+  embeddingsCreated: number
+  durationSeconds: number
+  status: 'running' | 'completed' | 'failed'
+  startedAt: string
+  completedAt?: string
+}
+
+export interface CrawlDashboardData {
+  lastRun: CrawlStats | null
+  totalEntries: number
+  byCategory: Record<string, number>
+  bySourceType: Record<string, number>
+  byPageType: Record<string, number>
+  recentUpdates: Array<{ title: string; sourceUrl: string; updatedAt: string; pageType: PageType }>
+  recentFailures: Array<{ url: string; error: string; attemptedAt: string }>
 }
 
 // ─── Departments ──────────────────────────────────────────────────
@@ -70,7 +154,7 @@ export interface TextChunk {
 export type Department = 'general' | 'cs_it' | 'bba' | 'pharmacy' | 'nursing'
 
 export const DEPARTMENTS: Department[] = [
-  'general', 'cs_it', 'bba', 'pharmacy', 'nursing'
+  'general', 'cs_it', 'bba', 'pharmacy', 'nursing',
 ]
 
 export const DEPARTMENT_LABELS: Record<Department, string> = {
@@ -79,6 +163,14 @@ export const DEPARTMENT_LABELS: Record<Department, string> = {
   bba:      'BBA Department',
   pharmacy: 'Pharmacy Department',
   nursing:  'Nursing Department',
+}
+
+// ─── Classification ───────────────────────────────────────────────
+
+export interface Classification {
+  pageType: PageType
+  category: string
+  department: string
 }
 
 // ─── UI State ─────────────────────────────────────────────────────

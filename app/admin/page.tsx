@@ -4,10 +4,11 @@ import { useState, useEffect, useRef } from 'react'
 import {
   BookOpen, Save, Eye, Edit3, Trash2, Plus, CheckCircle,
   Loader2, LogOut, GraduationCap, Cpu, BarChart3, FileText,
-  Layers, Users, DollarSign, Calendar, ChevronRight
+  Layers, Users, DollarSign, Calendar, ChevronRight, Globe
 } from 'lucide-react'
 import { getDepartmentData, saveDepartmentData } from '../actions/admin'
 import { signOut } from 'next-auth/react'
+import SyncIntelligenceTab from '@/components/admin/SyncIntelligenceTab'
 
 const departments = ['general', 'cs_it', 'bba', 'pharmacy', 'nursing']
 const departmentNames: Record<string, string> = {
@@ -30,7 +31,10 @@ const sections = [
   { id: 'faculty', label: 'Faculty', icon: Users },
 ]
 
+type AdminView = 'editor' | 'sync'
+
 export default function AdminPage() {
+  const [adminView, setAdminView] = useState<AdminView>('editor')
   const [selectedDept, setSelectedDept] = useState('general')
   const [activeSection, setActiveSection] = useState('overview')
   const [content, setContent] = useState('')
@@ -89,12 +93,21 @@ export default function AdminPage() {
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
               System Online
             </span>
-            <button onClick={() => setPreviewMode(!previewMode)} aria-label="Toggle preview mode"
+            {/* View toggle */}
+            <button onClick={() => setAdminView(v => v === 'editor' ? 'sync' : 'editor')} aria-label="Toggle sync view"
               className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold font-display transition-all"
-              style={{ background: previewMode ? 'rgba(201,162,39,0.15)' : 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: previewMode ? '#c9a227' : 'rgba(255,255,255,0.6)' }}>
-              {previewMode ? <Edit3 className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              {previewMode ? 'Edit' : 'Preview'}
+              style={{ background: adminView === 'sync' ? 'rgba(201,162,39,0.15)' : 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: adminView === 'sync' ? '#c9a227' : 'rgba(255,255,255,0.6)' }}>
+              {adminView === 'sync' ? <BookOpen className="w-4 h-4" /> : <Globe className="w-4 h-4" />}
+              {adminView === 'sync' ? 'Editor' : 'Sync'}
             </button>
+            {adminView === 'editor' && (
+              <button onClick={() => setPreviewMode(!previewMode)} aria-label="Toggle preview mode"
+                className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold font-display transition-all"
+                style={{ background: previewMode ? 'rgba(201,162,39,0.15)' : 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: previewMode ? '#c9a227' : 'rgba(255,255,255,0.6)' }}>
+                {previewMode ? <Edit3 className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                {previewMode ? 'Edit' : 'Preview'}
+              </button>
+            )}
             <button onClick={() => signOut({ callbackUrl: '/admin/login' })} aria-label="Sign out"
               className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold font-sans transition-all text-red-400 hover:text-red-300"
               style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.15)' }}>
@@ -107,6 +120,10 @@ export default function AdminPage() {
 
       {/* Body */}
       <div className="flex-1 max-w-7xl mx-auto w-full px-4 py-6 md:px-6 md:py-8">
+        {adminView === 'sync' && (
+          <SyncIntelligenceTab />
+        )}
+        {adminView === 'editor' && (
         <div className="grid md:grid-cols-4 gap-6 h-full">
 
           {/* Sidebar */}
@@ -243,6 +260,7 @@ export default function AdminPage() {
             </div>
           </main>
         </div>
+        )}
       </div>
     </div>
   )

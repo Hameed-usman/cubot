@@ -22,7 +22,7 @@ export default function AdminLoginPage() {
       setError('Invalid credentials. Access denied.')
       setLoading(false)
     } else {
-      router.push('/admin'); router.refresh()
+      window.location.replace('/admin')
     }
   }
 

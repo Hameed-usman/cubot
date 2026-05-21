@@ -51,14 +51,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const intentContext = getIntentContext(intent)
     const suggestions = getIntentSuggestions(intent)
 
-    // Step 4: Run RAG pipeline
-    const content = await runRAGPipeline(body, intentContext)
+    // Step 4: Run RAG pipeline (returns {content, citations, confidence})
+    const ragResult = await runRAGPipeline(body, intentContext)
 
-    // Step 5: Return JSON response
+    // Step 5: Return JSON response with citations and confidence
     return NextResponse.json({
-      message: content,
+      message: ragResult.content,
       intent,
-      suggestions
+      suggestions,
+      citations: ragResult.citations,
+      confidence: ragResult.confidence,
     })
   } catch (error: any) {
     // Step 5: Catch all unhandled errors
