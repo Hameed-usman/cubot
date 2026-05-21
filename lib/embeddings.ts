@@ -51,10 +51,7 @@ export async function embedText(text: string): Promise<number[]> {
 
   for (let attempt = 1; attempt <= RETRY_ATTEMPTS; attempt++) {
     try {
-      const result = await model.embedContent({
-        content: { role: 'user', parts: [{ text: cleanText }] },
-        outputDimensionality: 768
-      })
+      const result = await model.embedContent(cleanText)
       return result.embedding.values
     } catch (error: any) {
       const isRateLimit = error?.status === 429 || error?.message?.includes('429')
@@ -100,10 +97,7 @@ export async function embedBatch(texts: string[]): Promise<number[][]> {
         const batchResults = await Promise.all(
           batch.map(async (text) => {
             const clean = text.trim().slice(0, 10000)
-            const res = await model.embedContent({
-              content: { role: 'user', parts: [{ text: clean }] },
-              outputDimensionality: 768
-            })
+            const res = await model.embedContent(clean)
             return res.embedding.values
           })
         )
