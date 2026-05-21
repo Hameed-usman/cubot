@@ -35,24 +35,24 @@ export function classifyIntent(message: string): Intent {
 export function getIntentContext(intent: Intent): string {
   switch (intent) {
     case 'admission_inquiry':
-      return "CONTEXT: This person is likely a prospective student or their parent exploring admission. They are in decision-making mode. After answering, gently guide them toward the next concrete step: checking eligibility, visiting campus, or submitting an application. Mention the application deadline if known.";
+      return "INTENT: Admission query. Give concrete steps, eligibility, and deadlines if known. After answering, nudge toward the next action (apply, check eligibility, visit campus).";
     case 'fee_inquiry':
-      return "CONTEXT: This person is weighing affordability. They may be comparing us with other universities. After sharing the fee, mention any installment plan options and scholarship opportunities available — even if they didn't ask. This proactively removes a common barrier.";
+      return "INTENT: Fee query — likely comparing options. Share the fee structure directly. Proactively mention installment plans and scholarships if relevant, even if not asked.";
     case 'scholarship_inquiry':
-      return "CONTEXT: This person may have financial concerns. Be especially warm and encouraging. Mention all available scholarship types (merit, need-based, sports, etc.) and tell them exactly what documents they need. Motivate them — a scholarship question often means a serious candidate who just needs confidence.";
+      return "INTENT: Scholarship query — may have financial concerns. Cover all available types (merit, need-based, sports). Mention required documents and deadlines. Be encouraging but factual.";
     case 'program_inquiry':
-      return "CONTEXT: This person is exploring options — they may not have decided yet. Give them a clear overview, then ask a soft question to understand their interest area better (e.g., 'Are you more drawn to the technical side or management?'). This helps narrow down the best program for them.";
+      return "INTENT: Program exploration — user may be undecided. Give a clear overview of the program(s), then ask a narrowing question to help them decide.";
     case 'career_inquiry':
-      return "CONTEXT: This person wants to know if this degree is worth it. Share placement outcomes, industry partnerships, or notable alumni if available. Be honest and confident. End with something forward-looking that connects their ambition to what the university offers.";
+      return "INTENT: Career/ROI question. Share placement outcomes, industry links, or notable alumni if available. Be honest and forward-looking.";
     case 'faculty_hiring':
-      return "CONTEXT: This person is a professional exploring a teaching or research role. Treat them with high respect — they are a potential colleague. Share the hiring process clearly, mention what makes the university a great place to work, and guide them toward where to submit an application.";
+      return "INTENT: Professional exploring a teaching role. Share the hiring process clearly, mention what makes the university appealing, guide toward application submission.";
     case 'hostel_inquiry':
-      return "CONTEXT: This person is likely from another city or considering relocating. Address both practical concerns (cost, facilities, safety) and comfort concerns (environment, food, transport). A welcoming tone here can be the deciding factor for out-of-city students.";
+      return "INTENT: Likely from another city. Cover cost, facilities, safety, and transport. Practical details matter most here.";
     case 'contact_inquiry':
-      return "CONTEXT: This person wants to visit or reach out directly. Give the full contact info warmly and add a personal nudge: 'The admissions team is very helpful — they can walk you through everything in a single call.' If a campus visit is possible, encourage it.";
+      return "INTENT: Wants to reach out or visit. Give full contact info and encourage a campus visit or direct call if appropriate.";
     case 'general_question':
     default:
-      return "CONTEXT: Answer naturally and helpfully. If the question seems unrelated to the university, gently redirect with warmth.";
+      return "INTENT: General query. Answer naturally. If unrelated to the university, redirect briefly without being dismissive.";
   }
 }
 
