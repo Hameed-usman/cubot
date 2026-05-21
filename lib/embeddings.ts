@@ -52,7 +52,7 @@ export async function embedText(text: string): Promise<number[]> {
   for (let attempt = 1; attempt <= RETRY_ATTEMPTS; attempt++) {
     try {
       const result = await model.embedContent({
-        content: { parts: [{ text: cleanText }] },
+        content: { role: 'user', parts: [{ text: cleanText }] },
         outputDimensionality: 768
       })
       return result.embedding.values
@@ -101,7 +101,7 @@ export async function embedBatch(texts: string[]): Promise<number[][]> {
           batch.map(async (text) => {
             const clean = text.trim().slice(0, 10000)
             const res = await model.embedContent({
-              content: { parts: [{ text: clean }] },
+              content: { role: 'user', parts: [{ text: clean }] },
               outputDimensionality: 768
             })
             return res.embedding.values
