@@ -2,14 +2,17 @@
 
 import { Message } from '@/types'
 import { cn } from '@/lib/utils'
-import { AlertCircle, Bot, User } from 'lucide-react'
+import { AlertCircle, Bot, User, ThumbsUp, ThumbsDown } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { useTypewriter } from '@/hooks/useTypewriter'
 import { formatTime } from '@/lib/utils'
+import { useState } from 'react'
+import { showToast } from '../ui/Toast'
 
 interface MessageBubbleProps {
   message: Message
   isLatestBot?: boolean
+  sessionId?: string
   onSelectSuggestion?: (suggestion: string) => void
 }
 
@@ -66,9 +69,26 @@ function BotMessageContent({ content, isLatest, isError }: { content: string; is
   )
 }
 
-export function MessageBubble({ message, isLatestBot = false, onSelectSuggestion }: MessageBubbleProps) {
+export function MessageBubble({ message, isLatestBot = false, sessionId, onSelectSuggestion }: MessageBubbleProps) {
   const isUser = message.role === 'user'
   const isError = !!message.error
+  const [feedback, setFeedback] = useState<'thumbs_up' | 'thumbs_down' | null>(null)
+
+  const handleFeedback = async (type: 'thumbs_up' | 'thumbs_down') => {
+    if (feedback || !sessionId) return
+    setFeedback(type)
+    
+    try {
+      await fetch('/api/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sessionId, feedback: type }),
+      })
+      showToast({ message: 'Feedback submitted', duration: 2000 })
+    } catch (e) {
+      console.error('Failed to submit feedback', e)
+    }
+  }
 
   if (isUser) {
     return (
@@ -145,12 +165,42 @@ export function MessageBubble({ message, isLatestBot = false, onSelectSuggestion
           </div>
         </div>
 
-        {/* Timestamp */}
-        <div className="flex items-center gap-1.5 mt-1.5 ml-12">
-          <Bot className="w-3 h-3 text-cu-gold/40" aria-hidden="true" />
-          <time className="text-[11px] text-white/25 font-sans" dateTime={new Date(message.timestamp).toISOString()}>
-            Cubot · {formatTime(message.timestamp)}
-          </time>
+        {/* Timestamp & Feedback */}
+        <div className="flex items-center gap-3 mt-1.5 ml-12">
+          <div className="flex items-center gap-1.5">
+            <Bot className="w-3 h-3 text-cu-gold/40" aria-hidden="true" />
+            <time className="text-[11px] text-white/25 font-sans" dateTime={new Date(message.timestamp).toISOString()}>
+              Cubot · {formatTime(message.timestamp)}
+            </time>
+          </div>
+          
+          {/* Feedback buttons */}
+          {!isError && (
+            <div className="flex items-center gap-2 border-l border-white/10 pl-3">
+              <button
+                onClick={() => handleFeedback('thumbs_up')}
+                disabled={!!feedback}
+                aria-label="Thumbs up"
+                className={cn(
+                  "p-1 rounded hover:bg-white/5 transition-colors",
+                  feedback === 'thumbs_up' ? "text-green-400" : "text-white/30 hover:text-green-400/70"
+                )}
+              >
+                <ThumbsUp className="w-3 h-3" />
+              </button>
+              <button
+                onClick={() => handleFeedback('thumbs_down')}
+                disabled={!!feedback}
+                aria-label="Thumbs down"
+                className={cn(
+                  "p-1 rounded hover:bg-white/5 transition-colors",
+                  feedback === 'thumbs_down' ? "text-red-400" : "text-white/30 hover:text-red-400/70"
+                )}
+              >
+                <ThumbsDown className="w-3 h-3" />
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Suggestion chips */}

@@ -1,14 +1,15 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import {
   RefreshCw, Globe, FileText, Database, AlertTriangle,
   CheckCircle, Clock, Loader2, ExternalLink, Activity,
-  BarChart3, Zap
+  Zap, Link2, Info, ChevronDown, ChevronUp
 } from 'lucide-react'
 import { CrawlDashboardData } from '@/types'
 
 function formatDuration(seconds: number): string {
+  if (!seconds) return '—'
   if (seconds < 60) return `${seconds}s`
   const m = Math.floor(seconds / 60)
   const s = seconds % 60
@@ -18,12 +19,10 @@ function formatDuration(seconds: number): string {
 function timeAgo(iso: string): string {
   if (!iso) return 'Never'
   const diff = Date.now() - new Date(iso).getTime()
-  const h = Math.floor(diff / 3600000)
-  const d = Math.floor(diff / 86400000)
   if (diff < 60000) return 'Just now'
   if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`
-  if (h < 24) return `${h}h ago`
-  return `${d}d ago`
+  if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`
+  return `${Math.floor(diff / 86400000)}d ago`
 }
 
 const PAGE_TYPE_COLORS: Record<string, string> = {
@@ -39,7 +38,11 @@ export default function SyncIntelligenceTab() {
   const [data, setData] = useState<CrawlDashboardData | null>(null)
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
-  const [syncMsg, setSyncMsg] = useState('')
+  const [quickSyncing, setQuickSyncing] = useState(false)
+  const [syncMsg, setSyncMsg] = useState<{ text: string; success: boolean } | null>(null)
+  const [urlInput, setUrlInput] = useState('')
+  const [showFailures, setShowFailures] = useState(false)
+  const syncMsgTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   async function load() {
     setLoading(true)
@@ -50,210 +53,356 @@ export default function SyncIntelligenceTab() {
     setLoading(false)
   }
 
-  async function triggerSync() {
+  function showMsg(text: string, success: boolean) {
+    setSyncMsg({ text, success })
+    if (syncMsgTimeout.current) clearTimeout(syncMsgTimeout.current)
+    syncMsgTimeout.current = setTimeout(() => setSyncMsg(null), 8000)
+  }
+
+  async function triggerFullSync() {
     setSyncing(true)
-    setSyncMsg('')
+    setSyncMsg(null)
     try {
       const res = await fetch('/api/admin/trigger-crawl', { method: 'POST' })
       const json = await res.json()
-      setSyncMsg(json.message)
+      showMsg(json.message || (res.ok ? 'Sync started!' : 'Sync failed.'), res.ok && json.success)
+      if (res.ok) setTimeout(load, 3000) // Refresh stats after a moment
     } catch {
-      setSyncMsg('Failed to trigger sync.')
+      showMsg('Could not connect to sync API. Check your server.', false)
     }
     setSyncing(false)
   }
 
+  async function triggerQuickSync() {
+    const url = urlInput.trim()
+    if (!url) return
+    if (!url.startsWith('http')) {
+      showMsg('Please enter a valid URL starting with http:// or https://', false)
+      return
+    }
+    setQuickSyncing(true)
+    setSyncMsg(null)
+    try {
+      const res = await fetch('/api/admin/sync-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url }),
+      })
+      const json = await res.json()
+      if (res.ok && json.success) {
+        showMsg(`✓ Synced successfully! The bot now knows about: ${url}`, true)
+        setUrlInput('')
+        load()
+      } else {
+        showMsg(json.error || json.message || 'Sync failed.', false)
+      }
+    } catch {
+      showMsg('Connection failed. Make sure the dev server is running.', false)
+    }
+    setQuickSyncing(false)
+  }
+
   useEffect(() => { load() }, [])
 
-  const card = 'glass-dark rounded-2xl p-5 border'
-  const borderStyle = { border: '1px solid rgba(255,255,255,0.08)' }
+  const lr = data?.lastRun
+  const statusColor = lr?.status === 'completed'
+    ? 'text-emerald-400' : lr?.status === 'failed'
+    ? 'text-red-400' : 'text-amber-400'
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
+      <div className="flex flex-col items-center justify-center h-64 gap-3">
         <Loader2 className="w-8 h-8 animate-spin text-cu-gold" />
+        <p className="text-white/30 text-sm font-sans">Loading sync data…</p>
       </div>
     )
   }
 
-  const lr = data?.lastRun
-  const statusColor = lr?.status === 'completed' ? 'text-emerald-400' : lr?.status === 'failed' ? 'text-red-400' : 'text-amber-400'
-
   return (
     <div className="space-y-5">
 
-      {/* Header row */}
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="font-display font-bold text-white text-lg">Sync Intelligence</h2>
-          <p className="text-xs text-white/30 font-sans mt-0.5">Knowledge base crawl status &amp; observability</p>
+          <h2 className="font-display font-bold text-white text-lg">Knowledge Sync Center</h2>
+          <p className="text-xs text-white/30 font-sans mt-0.5">
+            Control what Cubot knows — sync website pages into the AI knowledge base
+          </p>
         </div>
-        <div className="flex gap-2">
-          <button onClick={load} className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-sans text-white/50 hover:text-white/80 transition-all" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
-            <RefreshCw className="w-3.5 h-3.5" /> Refresh
-          </button>
-          <button onClick={triggerSync} disabled={syncing} className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold font-display transition-all" style={{ background: '#c9a227', color: '#080d1a' }}>
-            {syncing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
-            {syncing ? 'Triggering…' : 'Sync Now'}
-          </button>
+        <button onClick={load}
+          className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-sans text-white/50 hover:text-white/80 transition-all"
+          style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
+          <RefreshCw className="w-3.5 h-3.5" /> Refresh
+        </button>
+      </div>
+
+      {/* How it works banner */}
+      <div className="rounded-2xl p-4 flex items-start gap-3"
+        style={{ background: 'rgba(59,130,246,0.05)', border: '1px solid rgba(59,130,246,0.15)' }}>
+        <Info className="w-4 h-4 text-blue-400/70 flex-shrink-0 mt-0.5" />
+        <div className="text-xs font-sans text-white/40 leading-relaxed">
+          <span className="text-white/60 font-semibold">How this works: </span>
+          Cubot reads CUSIT website pages and converts them into searchable AI knowledge. When you sync a page,
+          the bot learns everything on that page and can answer questions about it instantly.
+          Use <span className="text-white/60">Full Sync</span> to update everything, or{' '}
+          <span className="text-white/60">Quick Sync</span> to add a specific missing page.
         </div>
       </div>
 
+      {/* Status message */}
       {syncMsg && (
-        <div className="rounded-xl px-4 py-3 text-xs font-sans text-emerald-300" style={{ background: 'rgba(52,211,153,0.08)', border: '1px solid rgba(52,211,153,0.2)' }}>
-          {syncMsg}
+        <div className="rounded-xl px-4 py-3 text-xs font-sans flex items-start gap-2"
+          style={{
+            background: syncMsg.success ? 'rgba(52,211,153,0.08)' : 'rgba(239,68,68,0.08)',
+            border: `1px solid ${syncMsg.success ? 'rgba(52,211,153,0.25)' : 'rgba(239,68,68,0.25)'}`,
+            color: syncMsg.success ? '#34d399' : '#f87171'
+          }}>
+          {syncMsg.success
+            ? <CheckCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+            : <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />}
+          <span>{syncMsg.text}</span>
         </div>
       )}
 
-      {/* Stats row */}
+      {/* Two sync cards */}
+      <div className="grid md:grid-cols-2 gap-4">
+
+        {/* Full Site Sync */}
+        <div className="rounded-2xl p-5 flex flex-col gap-4"
+          style={{ background: 'rgba(201,162,39,0.04)', border: '1px solid rgba(201,162,39,0.2)' }}>
+          <div>
+            <div className="flex items-center gap-2 mb-1.5">
+              <div className="w-7 h-7 rounded-lg flex items-center justify-center"
+                style={{ background: 'rgba(201,162,39,0.15)' }}>
+                <Globe className="w-4 h-4 text-cu-gold" />
+              </div>
+              <h3 className="font-display font-bold text-white text-sm">Full Site Sync</h3>
+            </div>
+            <p className="text-xs text-white/40 font-sans leading-relaxed">
+              Crawls the entire CUSIT website and updates all knowledge. Takes 3–8 minutes.
+              Run this when major content changes happen (new semester, fee revision, etc.)
+            </p>
+          </div>
+          <div className="text-xs text-white/30 font-sans">
+            Last run: <span className="text-white/60">{timeAgo(lr?.completedAt || '')}</span>
+            {lr && (
+              <span className={`ml-3 font-semibold ${statusColor}`}>
+                {lr.status === 'completed' ? '✓ Success' : lr.status === 'failed' ? '✗ Failed' : '⟳ Running'}
+              </span>
+            )}
+          </div>
+          <button
+            onClick={triggerFullSync}
+            disabled={syncing}
+            className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl text-sm font-bold font-display transition-all"
+            style={{
+              background: syncing ? 'rgba(201,162,39,0.2)' : '#c9a227',
+              color: syncing ? '#c9a227' : '#080d1a',
+              opacity: syncing ? 0.7 : 1,
+            }}>
+            {syncing
+              ? <><Loader2 className="w-4 h-4 animate-spin" /> Starting Sync…</>
+              : <><Zap className="w-4 h-4" /> Sync Entire Website</>}
+          </button>
+        </div>
+
+        {/* Quick Single-URL Sync */}
+        <div className="rounded-2xl p-5 flex flex-col gap-4"
+          style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.08)' }}>
+          <div>
+            <div className="flex items-center gap-2 mb-1.5">
+              <div className="w-7 h-7 rounded-lg flex items-center justify-center"
+                style={{ background: 'rgba(255,255,255,0.06)' }}>
+                <Link2 className="w-4 h-4 text-white/60" />
+              </div>
+              <h3 className="font-display font-bold text-white text-sm">Quick Page Sync</h3>
+            </div>
+            <p className="text-xs text-white/40 font-sans leading-relaxed">
+              Paste a specific page URL to instantly teach Cubot about it.
+              Use this when the bot doesn't know about a teacher, department, or program.
+            </p>
+          </div>
+          <div className="flex flex-col gap-2">
+            <input
+              type="url"
+              value={urlInput}
+              onChange={e => setUrlInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && triggerQuickSync()}
+              placeholder="https://cusit.edu.pk/cusitnew/..."
+              className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-xs text-white placeholder-white/20 focus:outline-none focus:border-white/25 transition-all font-sans"
+            />
+            <button
+              onClick={triggerQuickSync}
+              disabled={quickSyncing || !urlInput.trim()}
+              className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl text-xs font-bold font-display transition-all"
+              style={{
+                background: 'rgba(255,255,255,0.06)',
+                border: '1px solid rgba(255,255,255,0.12)',
+                color: !urlInput.trim() ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.8)',
+                cursor: !urlInput.trim() ? 'not-allowed' : 'pointer',
+              }}>
+              {quickSyncing
+                ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Syncing page…</>
+                : <><RefreshCw className="w-3.5 h-3.5" /> Sync This Page</>}
+            </button>
+          </div>
+          <p className="text-[10px] text-white/20 font-sans">
+            Tip: If a student asks about something the bot doesn't know, copy that page URL from the CUSIT website and paste it here.
+          </p>
+        </div>
+      </div>
+
+      {/* Knowledge Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
-          { label: 'Total Chunks', value: data?.totalEntries ?? 0, icon: Database },
-          { label: 'Pages Crawled', value: lr?.pagesCrawled ?? 0, icon: Globe },
-          { label: 'Documents', value: lr?.documentsProcessed ?? 0, icon: FileText },
-          { label: 'Failed Pages', value: lr?.pagesFailed ?? 0, icon: AlertTriangle },
-        ].map(({ label, value, icon: Icon }) => (
-          <div key={label} className={card} style={borderStyle}>
+          { label: 'Knowledge Chunks', value: (data?.totalEntries ?? 0).toLocaleString(), icon: Database, desc: 'Pieces of info the bot knows' },
+          { label: 'Pages Crawled', value: (lr?.pagesCrawled ?? 0).toLocaleString(), icon: Globe, desc: 'Website pages ever indexed' },
+          { label: 'Documents', value: (lr?.documentsProcessed ?? 0).toLocaleString(), icon: FileText, desc: 'PDFs and docs indexed' },
+          { label: 'Failed Pages', value: (lr?.pagesFailed ?? 0).toLocaleString(), icon: AlertTriangle, desc: 'Pages that failed to load' },
+        ].map(({ label, value, icon: Icon, desc }) => (
+          <div key={label} className="rounded-2xl p-4"
+            style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.07)' }}>
             <div className="flex items-center gap-2 mb-1">
-              <Icon className="w-3.5 h-3.5 text-white/30" />
-              <span className="text-[10px] uppercase tracking-widest text-white/30 font-sans">{label}</span>
+              <Icon className="w-3.5 h-3.5 text-white/25" />
+              <span className="text-[10px] uppercase tracking-widest text-white/25 font-sans font-bold">{label}</span>
             </div>
-            <p className="font-display font-bold text-white text-2xl">{value.toLocaleString()}</p>
+            <p className="font-display font-bold text-white text-2xl">{value}</p>
+            <p className="text-[10px] text-white/20 font-sans mt-0.5">{desc}</p>
           </div>
         ))}
       </div>
 
-      {/* Last run details */}
+      {/* Last Crawl Run details */}
       {lr && (
-        <div className={card} style={borderStyle}>
-          <div className="flex items-center justify-between mb-3">
+        <div className="rounded-2xl p-5"
+          style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.07)' }}>
+          <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
-              <Activity className="w-4 h-4 text-white/40" />
-              <span className="text-sm font-display font-semibold text-white">Last Crawl Run</span>
+              <Activity className="w-4 h-4 text-white/30" />
+              <span className="text-sm font-display font-semibold text-white">Last Full Sync Details</span>
             </div>
             <span className={`text-xs font-semibold font-display ${statusColor}`}>
               {lr.status === 'completed' ? '✓ Completed' : lr.status === 'failed' ? '✗ Failed' : '⟳ Running'}
             </span>
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs font-sans">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs font-sans">
             {[
               ['Started', timeAgo(lr.startedAt)],
               ['Duration', formatDuration(lr.durationSeconds)],
-              ['Updated', lr.pagesUpdated],
-              ['Skipped', lr.pagesSkipped],
+              ['Pages Updated', lr.pagesUpdated],
+              ['Pages Skipped', lr.pagesSkipped],
             ].map(([k, v]) => (
               <div key={String(k)}>
-                <p className="text-white/30 mb-0.5">{k}</p>
-                <p className="text-white/80 font-medium">{v}</p>
+                <p className="text-white/25 mb-1">{k}</p>
+                <p className="text-white/80 font-semibold">{String(v ?? '—')}</p>
               </div>
             ))}
           </div>
         </div>
       )}
 
-      <div className="grid md:grid-cols-2 gap-4">
-
-        {/* Category breakdown */}
-        {data?.byCategory && Object.keys(data.byCategory).length > 0 && (
-          <div className={card} style={borderStyle}>
-            <div className="flex items-center gap-2 mb-3">
-              <BarChart3 className="w-4 h-4 text-white/40" />
-              <span className="text-sm font-display font-semibold text-white">By Category</span>
-            </div>
-            <div className="space-y-2">
-              {Object.entries(data.byCategory).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([cat, count]) => {
-                const max = Math.max(...Object.values(data.byCategory))
-                const pct = Math.round((count / max) * 100)
-                return (
-                  <div key={cat}>
-                    <div className="flex justify-between text-xs font-sans mb-1">
-                      <span className="text-white/60">{cat}</span>
-                      <span className="text-white/40">{count}</span>
-                    </div>
-                    <div className="h-1 rounded-full" style={{ background: 'rgba(255,255,255,0.06)' }}>
-                      <div className="h-1 rounded-full bg-cu-gold transition-all" style={{ width: `${pct}%` }} />
-                    </div>
+      {/* Category breakdown */}
+      {data?.byCategory && Object.keys(data.byCategory).length > 0 && (
+        <div className="rounded-2xl p-5"
+          style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.07)' }}>
+          <div className="flex items-center gap-2 mb-4">
+            <Database className="w-4 h-4 text-white/30" />
+            <span className="text-sm font-display font-semibold text-white">Knowledge by Category</span>
+          </div>
+          <div className="space-y-2.5">
+            {Object.entries(data.byCategory).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([cat, count]) => {
+              const max = Math.max(...Object.values(data.byCategory))
+              const pct = Math.round((count / max) * 100)
+              return (
+                <div key={cat}>
+                  <div className="flex justify-between text-xs font-sans mb-1">
+                    <span className="text-white/50 capitalize">{cat.replace(/_/g, ' ')}</span>
+                    <span className="text-white/30 font-mono">{count} chunks</span>
                   </div>
-                )
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* Source type breakdown */}
-        {data?.bySourceType && Object.keys(data.bySourceType).length > 0 && (
-          <div className={card} style={borderStyle}>
-            <div className="flex items-center gap-2 mb-3">
-              <FileText className="w-4 h-4 text-white/40" />
-              <span className="text-sm font-display font-semibold text-white">By Source Type</span>
-            </div>
-            <div className="space-y-3">
-              {Object.entries(data.bySourceType).map(([type, count]) => (
-                <div key={type} className="flex items-center justify-between">
-                  <span className="text-xs font-sans text-white/60 uppercase">{type}</span>
-                  <span className="text-xs font-display font-bold text-white/80">{count.toLocaleString()}</span>
+                  <div className="h-1.5 rounded-full" style={{ background: 'rgba(255,255,255,0.05)' }}>
+                    <div className="h-full rounded-full bg-cu-gold transition-all duration-700" style={{ width: `${pct}%` }} />
+                  </div>
                 </div>
-              ))}
-            </div>
-            {!lr && (
-              <p className="text-xs text-white/25 font-sans mt-4 pt-4 border-t border-white/5">
-                Run <code className="text-cu-gold">npm run crawl</code> to populate the knowledge base from the CUSIT website.
-              </p>
-            )}
+              )
+            })}
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
-      {/* Recent updates */}
+      {/* Recently indexed pages */}
       {data?.recentUpdates && data.recentUpdates.length > 0 && (
-        <div className={card} style={borderStyle}>
-          <div className="flex items-center gap-2 mb-3">
-            <Clock className="w-4 h-4 text-white/40" />
-            <span className="text-sm font-display font-semibold text-white">Recently Indexed Pages</span>
+        <div className="rounded-2xl p-5"
+          style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.07)' }}>
+          <div className="flex items-center gap-2 mb-4">
+            <Clock className="w-4 h-4 text-white/30" />
+            <span className="text-sm font-display font-semibold text-white">Recently Synced Pages</span>
           </div>
-          <div className="space-y-2">
+          <div className="space-y-1">
             {data.recentUpdates.slice(0, 8).map((u, i) => (
-              <div key={i} className="flex items-center gap-3 py-1.5 border-b last:border-0" style={{ borderColor: 'rgba(255,255,255,0.05)' }}>
-                <span className={`text-[10px] font-display font-semibold uppercase ${PAGE_TYPE_COLORS[u.pageType] || 'text-white/30'}`}>{u.pageType}</span>
-                <span className="text-xs font-sans text-white/60 flex-1 truncate">{u.title}</span>
+              <div key={i} className="flex items-center gap-3 py-2 rounded-xl px-2 hover:bg-white/[0.02] transition-colors"
+                style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                <span className={`text-[10px] font-semibold uppercase w-16 flex-shrink-0 ${PAGE_TYPE_COLORS[u.pageType] || 'text-white/25'}`}>
+                  {u.pageType}
+                </span>
+                <span className="text-xs font-sans text-white/55 flex-1 truncate">{u.title}</span>
                 {u.sourceUrl && (
-                  <a href={u.sourceUrl} target="_blank" rel="noopener noreferrer" className="text-white/20 hover:text-cu-gold transition-colors">
+                  <a href={u.sourceUrl} target="_blank" rel="noopener noreferrer"
+                    className="text-white/15 hover:text-cu-gold transition-colors flex-shrink-0">
                     <ExternalLink className="w-3 h-3" />
                   </a>
                 )}
-                <span className="text-[10px] font-sans text-white/25 flex-shrink-0">{timeAgo(u.updatedAt)}</span>
+                <span className="text-[10px] font-sans text-white/20 flex-shrink-0">{timeAgo(u.updatedAt)}</span>
               </div>
             ))}
           </div>
         </div>
       )}
 
-      {/* Failed pages */}
+      {/* Failed pages (collapsible) */}
       {data?.recentFailures && data.recentFailures.length > 0 && (
-        <div className={card} style={{ border: '1px solid rgba(239,68,68,0.15)' }}>
-          <div className="flex items-center gap-2 mb-3">
-            <AlertTriangle className="w-4 h-4 text-red-400/60" />
-            <span className="text-sm font-display font-semibold text-red-300">Failed Pages</span>
-          </div>
-          <div className="space-y-2">
-            {data.recentFailures.slice(0, 5).map((f, i) => (
-              <div key={i} className="text-xs font-sans">
-                <p className="text-white/50 truncate">{f.url}</p>
-                <p className="text-red-400/60">{f.error}</p>
-              </div>
-            ))}
-          </div>
+        <div className="rounded-2xl overflow-hidden"
+          style={{ border: '1px solid rgba(239,68,68,0.15)' }}>
+          <button
+            onClick={() => setShowFailures(!showFailures)}
+            className="w-full flex items-center justify-between p-4 text-left hover:bg-red-950/10 transition-colors">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-red-400/60" />
+              <span className="text-sm font-display font-semibold text-red-300/80">
+                {data.recentFailures.length} Failed Pages
+              </span>
+              <span className="text-xs text-white/25 font-sans">(click to see which pages couldn't be synced)</span>
+            </div>
+            {showFailures ? <ChevronUp className="w-4 h-4 text-white/25" /> : <ChevronDown className="w-4 h-4 text-white/25" />}
+          </button>
+          {showFailures && (
+            <div className="px-4 pb-4 space-y-2">
+              {data.recentFailures.slice(0, 5).map((f, i) => (
+                <div key={i} className="rounded-xl p-3 text-xs font-sans"
+                  style={{ background: 'rgba(239,68,68,0.05)', border: '1px solid rgba(239,68,68,0.1)' }}>
+                  <p className="text-white/50 truncate mb-0.5">{f.url}</p>
+                  <p className="text-red-400/60">{f.error}</p>
+                </div>
+              ))}
+              <p className="text-[10px] text-white/20 font-sans pt-1">
+                Try pasting these URLs into the Quick Page Sync box above to retry them.
+              </p>
+            </div>
+          )}
         </div>
       )}
 
       {/* Empty state */}
       {!lr && !data?.totalEntries && (
-        <div className="flex flex-col items-center justify-center py-16 gap-4 text-center">
+        <div className="flex flex-col items-center justify-center py-16 gap-4 text-center rounded-2xl"
+          style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)' }}>
           <Globe className="w-12 h-12 text-white/10" />
-          <p className="text-white/40 font-sans text-sm">No crawl data yet.</p>
-          <p className="text-white/25 font-sans text-xs max-w-sm">
-            Run <code className="text-cu-gold">npm run setup-db</code> then <code className="text-cu-gold">npm run crawl</code> to start indexing the CUSIT website.
-          </p>
+          <div>
+            <p className="text-white/40 font-sans text-sm font-semibold mb-1">Knowledge base is empty</p>
+            <p className="text-white/20 font-sans text-xs max-w-sm">
+              Click <strong className="text-white/40">Sync Entire Website</strong> above to start indexing CUSIT.
+              This will take about 5–10 minutes but only needs to be done once.
+            </p>
+          </div>
         </div>
       )}
     </div>

@@ -7,6 +7,7 @@ export type Intent =
   | 'faculty_hiring'
   | 'hostel_inquiry'
   | 'contact_inquiry'
+  | 'faculty_inquiry'
   | 'general_question';
 
 export function classifyIntent(message: string): Intent {
@@ -20,7 +21,8 @@ export function classifyIntent(message: string): Intent {
     { type: 'career_inquiry', keywords: ['job', 'career', 'placement', 'employment', 'salary', 'after graduation', 'industry'] },
     { type: 'faculty_hiring', keywords: ['teach', 'lecturer', 'professor', 'faculty', 'vacancy', 'hiring', 'job opening', 'join as teacher'] },
     { type: 'hostel_inquiry', keywords: ['hostel', 'accommodation', 'dorm', 'dormitory', 'living', 'room', 'stay', 'residential'] },
-    { type: 'contact_inquiry', keywords: ['contact', 'phone', 'email', 'address', 'location', 'where', 'visit', 'find you', 'directions', 'map'] }
+    { type: 'contact_inquiry', keywords: ['contact', 'phone', 'email', 'address', 'location', 'where', 'visit', 'find you', 'directions', 'map'] },
+    { type: 'faculty_inquiry', keywords: ['who is', 'tell me about', 'profile', 'teacher', 'professor', 'lecturer', 'staff', 'faculty', 'researcher', 'cv', 'doctor', 'dr.', 'qualification'] }
   ];
 
   for (const intent of intents) {
@@ -50,6 +52,8 @@ export function getIntentContext(intent: Intent): string {
       return "INTENT: Likely from another city. Cover cost, facilities, safety, and transport. Practical details matter most here.";
     case 'contact_inquiry':
       return "INTENT: Wants to reach out or visit. Give full contact info and encourage a campus visit or direct call if appropriate.";
+    case 'faculty_inquiry':
+      return "INTENT: Looking for a specific teacher or faculty info. PROVIDE FULL PROFESSIONAL DETAILS if found (designation, research, email). If not found, mention you have access to faculty lists and ask for the department or name again.";
     case 'general_question':
     default:
       return "INTENT: General query. Answer naturally. If unrelated to the university, redirect briefly without being dismissive.";
@@ -74,6 +78,8 @@ export function getIntentSuggestions(intent: Intent): string[] {
       return ["What is the monthly hostel fee?", "Is the hostel co-educational or separate?", "What transport is available from campus?"];
     case 'contact_inquiry':
       return ["Can I schedule a campus visit?", "What are the office hours?", "Is there an online application form?"];
+    case 'faculty_inquiry':
+      return ["Who is the head of CS department?", "Tell me about Dr. Usman", "Show faculty list"];
     case 'general_question':
     default:
       return ["Tell me about admission requirements", "What programs are available?", "How can I contact the university?"];

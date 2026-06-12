@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { checkRateLimit } from '@/lib/ratelimit'
-import { runRAGPipeline } from '@/lib/rag'
+import { runRAGPipeline, runStreamingRAGPipeline } from '@/lib/rag'
 import { ChatRequest } from '@/types'
 import { classifyIntent, getIntentContext } from '@/lib/intent'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-export async function POST(request: NextRequest): Promise<NextResponse> {
+export async function POST(request: NextRequest): Promise<Response> {
   try {
     // Step 1: Rate limiting - runs first before any other processing
     const ip =
@@ -50,16 +50,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const intent = classifyIntent(body.message)
     const intentContext = getIntentContext(intent)
 
-    // Step 4: Run RAG pipeline (returns {content, citations, confidence})
-    const ragResult = await runRAGPipeline(body, intentContext)
+    // Step 4: Run RAG pipeline (Streaming)
+    const stream = await runStreamingRAGPipeline(body, intentContext, intent)
 
-    // Step 5: Return JSON response with citations, confidence, and dynamic suggestions
-    return NextResponse.json({
-      message: ragResult.content,
-      intent,
-      suggestions: ragResult.suggestions,
-      citations: ragResult.citations,
-      confidence: ragResult.confidence,
+    // Step 5: Return Streaming Response
+    return new Response(stream, {
+      headers: {
+        'Content-Type': 'text/plain; charset=utf-8',
+        'X-Content-Type-Options': 'nosniff',
+      },
     })
   } catch (error: any) {
     // Step 5: Catch all unhandled errors

@@ -19,8 +19,8 @@ const initPinecone = () => {
 
   if (dimension !== '768') {
     console.warn(
-      `WARNING: PINECONE_DIMENSION is "${dimension}" but Google gemini-embedding-001 outputs 768 dimensions. ` +
-      `This mismatch will cause all vector operations to fail.`
+      `WARNING: PINECONE_DIMENSION is "${dimension}" but embeddings are configured to output 768 dimensions. ` +
+      `This mismatch will cause all vector operations to fail. Set PINECONE_DIMENSION=768 in your .env.local.`
     )
   }
 

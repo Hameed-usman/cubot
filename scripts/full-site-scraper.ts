@@ -17,19 +17,51 @@ import { processDocument } from './document-processor'
 const BASE_URL = 'https://www.cusit.edu.pk'
 const ALLOWED_DOMAINS = ['cusit.edu.pk', 'www.cusit.edu.pk']
 const MAX_PAGES = parseInt(process.env.CRAWLER_MAX_PAGES || '2500')
-const CONCURRENCY = parseInt(process.env.CRAWLER_CONCURRENCY || '5')
-const REQUEST_DELAY_MS = parseInt(process.env.CRAWLER_DELAY_MS || '800')
+const CONCURRENCY = parseInt(process.env.CRAWLER_CONCURRENCY || '4')
+const REQUEST_DELAY_MS = parseInt(process.env.CRAWLER_DELAY_MS || '900')
 const DRY_RUN = process.env.DRY_RUN === 'true'
+const INCREMENTAL = process.env.INCREMENTAL !== 'false' // Default: incremental ON
 
 const DENY_PATTERNS = [
   /\.(jpg|jpeg|png|gif|svg|ico|css|js|woff|woff2|ttf|eot|mp4|mp3|avi|zip|rar|tar|gz)(\?.*)?$/i,
   /\/(wp-admin|wp-login|wp-cron|feed|rss|sitemap\.xml|robots\.txt)/i,
   /\/(login|logout|register|cart|checkout|account)/i,
   /(facebook|twitter|youtube|linkedin|instagram|whatsapp)\.com/i,
-  /mailto:|tel:|javascript:/i,
+  /mailto:|tel:|javascript:|#$/i,
 ]
 
 const DOCUMENT_EXTENSIONS = ['.pdf', '.docx', '.xlsx', '.doc', '.pptx', '.ppt']
+
+// ─── Priority URLs ─────────────────────────────────────────────────────────────
+
+/**
+ * High-priority: faculty profiles, admissions pages, fee structures.
+ * These are crawled FIRST before generic pages are discovered.
+ */
+const SEED_URLS: Array<{ url: string; priority: number }> = [
+  // Priority 1 — Core institutional pages
+  { url: 'https://www.cusit.edu.pk', priority: 1 },
+  { url: 'https://www.cusit.edu.pk/admissions.php', priority: 1 },
+  { url: 'https://www.cusit.edu.pk/fee-structure.php', priority: 1 },
+  { url: 'https://www.cusit.edu.pk/scholarships.php', priority: 1 },
+  { url: 'https://www.cusit.edu.pk/contact.php', priority: 1 },
+
+  // Priority 2 — Faculty lists (each leads to profile pages)
+  { url: 'https://cusit.edu.pk/cusitnew/cs/faculty.php', priority: 2 },
+  { url: 'https://cusit.edu.pk/cusitnew/se/faculty.php', priority: 2 },
+  { url: 'https://cusit.edu.pk/cusitnew/bba/faculty.php', priority: 2 },
+  { url: 'https://cusit.edu.pk/cusitnew/pharmacy/faculty.php', priority: 2 },
+  { url: 'https://cusit.edu.pk/cusitnew/nursing/faculty.php', priority: 2 },
+  { url: 'https://cusit.edu.pk/cusitnew/civil/faculty.php', priority: 2 },
+  { url: 'https://cusit.edu.pk/cusitnew/electrical/faculty.php', priority: 2 },
+
+  // Priority 3 — Programs
+  { url: 'https://cusit.edu.pk/cusitnew/cs/programs.php', priority: 3 },
+  { url: 'https://cusit.edu.pk/cusitnew/se/programs.php', priority: 3 },
+  { url: 'https://cusit.edu.pk/cusitnew/bba/programs.php', priority: 3 },
+  { url: 'https://cusit.edu.pk/cusitnew/pharmacy/programs.php', priority: 3 },
+  { url: 'https://cusit.edu.pk/cusitnew/nursing/programs.php', priority: 3 },
+]
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -37,6 +69,7 @@ interface QueueItem {
   url: string
   depth: number
   parentUrl: string
+  priority: number // Lower = higher priority
 }
 
 interface PageResult {
@@ -46,6 +79,7 @@ interface PageResult {
   status: 'success' | 'skipped' | 'failed'
   chunksCreated?: number
   error?: string
+  links?: string[]
 }
 
 // ─── Crawl Stats ───────────────────────────────────────────────────────────────
@@ -56,23 +90,89 @@ const stats = {
   pagesFailed: 0,
   pagesUpdated: 0,
   pagesSkipped: 0,
+  pagesUnchanged: 0,
   documentsProcessed: 0,
   chunksCreated: 0,
   embeddingsCreated: 0,
   startedAt: new Date(),
 }
 
+// ─── Robots.txt Parser ─────────────────────────────────────────────────────────
+
+let robotsDisallowed: RegExp[] = []
+
+async function loadRobotsTxt(baseUrl: string): Promise<void> {
+  try {
+    const resp = await fetch(`${baseUrl}/robots.txt`, {
+      signal: AbortSignal.timeout(5000),
+    })
+    if (!resp.ok) return
+
+    const text = await resp.text()
+    const disallowed: string[] = []
+    let isOurAgent = false
+
+    for (const line of text.split('\n')) {
+      const trimmed = line.trim()
+      if (/^user-agent:\s*\*/i.test(trimmed) || /^user-agent:\s*CubotCrawler/i.test(trimmed)) {
+        isOurAgent = true
+      } else if (/^user-agent:/i.test(trimmed)) {
+        isOurAgent = false
+      } else if (isOurAgent && /^disallow:/i.test(trimmed)) {
+        const rule = trimmed.replace(/^disallow:\s*/i, '').trim()
+        if (rule) disallowed.push(rule)
+      }
+    }
+
+    robotsDisallowed = disallowed.map(r => {
+      const escaped = r.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')
+      return new RegExp(escaped)
+    })
+
+    console.log(`🤖 Robots.txt: ${disallowed.length} disallow rules loaded`)
+  } catch {
+    console.log('⚠️  Could not load robots.txt — proceeding without it')
+  }
+}
+
+function isRobotsBlocked(url: string): boolean {
+  try {
+    const parsed = new URL(url)
+    const pathAndQuery = parsed.pathname + parsed.search
+    return robotsDisallowed.some(r => r.test(pathAndQuery))
+  } catch {
+    return false
+  }
+}
+
 // ─── URL Utilities ─────────────────────────────────────────────────────────────
 
+/**
+ * Canonical URL normalization:
+ * - Remove fragments
+ * - Remove tracking params (utm_*, ref, etc.)
+ * - Normalize trailing slash (remove it)
+ * - Lowercase hostname
+ */
 function normalizeUrl(url: string, base: string): string | null {
   try {
     const resolved = new URL(url, base)
-    // Remove fragment and normalize
     resolved.hash = ''
-    // Remove common tracking params
-    resolved.searchParams.delete('utm_source')
-    resolved.searchParams.delete('utm_medium')
-    resolved.searchParams.delete('utm_campaign')
+
+    // Remove tracking & session params
+    const removeParams = [
+      'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content',
+      'ref', 'referrer', 'fbclid', 'gclid', 'sessionid', 'session_id',
+      '_ga', 'mc_cid', 'mc_eid',
+    ]
+    removeParams.forEach(p => resolved.searchParams.delete(p))
+
+    // Normalize trailing slash on path (except root)
+    if (resolved.pathname.endsWith('/') && resolved.pathname.length > 1) {
+      resolved.pathname = resolved.pathname.slice(0, -1)
+    }
+
+    resolved.hostname = resolved.hostname.toLowerCase()
     return resolved.href
   } catch {
     return null
@@ -84,6 +184,7 @@ function isAllowedUrl(url: string): boolean {
     const parsed = new URL(url)
     if (!ALLOWED_DOMAINS.some(d => parsed.hostname === d)) return false
     if (DENY_PATTERNS.some(p => p.test(url))) return false
+    if (isRobotsBlocked(url)) return false
     return true
   } catch {
     return false
@@ -95,14 +196,86 @@ function isDocumentUrl(url: string): boolean {
   return DOCUMENT_EXTENSIONS.some(ext => lower.includes(ext))
 }
 
+// ─── Incremental Change Detection ─────────────────────────────────────────────
+
+/**
+ * Fetches page with HTTP conditional request (If-Modified-Since).
+ * If server returns 304 Not Modified, we skip re-processing entirely.
+ * Saves embedding costs for unchanged pages.
+ */
+async function fetchPageWithChangeDetection(
+  url: string,
+  lastScrapedAt?: string
+): Promise<{ html: string; status: 'changed' | 'unchanged' | 'failed'; error?: string }> {
+  const headers: Record<string, string> = {
+    'User-Agent': 'Mozilla/5.0 (compatible; CubotCrawler/1.0; +https://cusit.edu.pk/cubot)',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.5',
+    'Cache-Control': 'no-cache',
+  }
+
+  // Add conditional request header for incremental crawling
+  if (INCREMENTAL && lastScrapedAt) {
+    headers['If-Modified-Since'] = new Date(lastScrapedAt).toUTCString()
+  }
+
+  try {
+    const response = await fetch(url, {
+      headers,
+      signal: AbortSignal.timeout(20000),
+    })
+
+    // 304 = page unchanged since last crawl
+    if (response.status === 304) {
+      return { html: '', status: 'unchanged' }
+    }
+
+    if (!response.ok) {
+      return { html: '', status: 'failed', error: `HTTP ${response.status}` }
+    }
+
+    const contentType = response.headers.get('content-type') || ''
+    if (!contentType.includes('text/html')) {
+      return { html: '', status: 'failed', error: 'Non-HTML content' }
+    }
+
+    const html = await response.text()
+    return { html, status: 'changed' }
+  } catch (error: any) {
+    return { html: '', status: 'failed', error: error.message || 'Fetch error' }
+  }
+}
+
+// ─── Previously Scraped URL Lookup ────────────────────────────────────────────
+
+async function getLastScrapedAt(url: string): Promise<string | null> {
+  try {
+    const rows = await sql`
+      SELECT MAX(last_scraped_at) as last_scraped
+      FROM knowledge_entries
+      WHERE source_url = ${url}
+        AND last_scraped_at IS NOT NULL
+    `
+    return rows[0]?.last_scraped?.toISOString() || null
+  } catch {
+    return null
+  }
+}
+
 // ─── Content Extraction ────────────────────────────────────────────────────────
 
-async function extractContent(html: string, url: string): Promise<{ title: string; content: string; links: string[] }> {
-  // Dynamic import to support both environments
+/**
+ * Enhanced content extractor with CUSIT-specific selectors and
+ * aggressive boilerplate removal.
+ */
+async function extractContent(
+  html: string,
+  url: string
+): Promise<{ title: string; content: string; links: string[] }> {
   const cheerio = await import('cheerio')
   const $ = cheerio.load(html)
 
-  // 1. Extract links FIRST before we modify/remove any DOM elements
+  // 1. Extract links BEFORE removing any DOM elements
   const links: string[] = []
   $('a[href]').each((_, el) => {
     const href = $(el).attr('href')
@@ -115,170 +288,58 @@ async function extractContent(html: string, url: string): Promise<{ title: strin
   const isFacultyProfile = url.includes('profile.php')
 
   if (isFacultyProfile) {
-    // Custom structured extraction for faculty profiles
-    const name = $('h4.color-white, h4').first().text().trim() || 
-                 $('title').text().trim().replace(/profile/i, '').replace(/cusit/i, '').replace(/[-|:]/g, '').trim() ||
-                 'Faculty Member';
-                 
-    let designation = '';
-    let email = '';
-    let phone = '';
-    let department = '';
-
-    // Search body elements for basic profile info
-    $('body').find('p, td, li, span, div, h4').each((_, el) => {
-      const txt = $(el).text().replace(/\s+/g, ' ').trim();
-      
-      // Email check
-      if (!email && txt.includes('@')) {
-        const emailMatch = txt.match(/[\w.-]+@[\w.-]+\.[a-zA-Z]{2,}/);
-        if (emailMatch) email = emailMatch[0];
-      }
-      
-      // Designation check
-      if (!designation && /designation|lecturer|professor|assistant|associate|instructor/i.test(txt)) {
-        if (/designation/i.test(txt)) {
-          designation = txt.replace(/designation:?/i, '').trim();
-        } else if (txt.length < 50) {
-          designation = txt;
-        }
-      }
-
-      // Department check
-      if (!department && /department|dept|faculty of/i.test(txt)) {
-        if (/department|dept/i.test(txt) && txt.length < 80) {
-          department = txt.replace(/department:?|dept:?/i, '').trim();
-        }
-      }
-
-      // Phone check
-      if (!phone && /phone|cell|mobile|contact/i.test(txt)) {
-        const phoneMatch = txt.match(/[\d+-]{7,}/);
-        if (phoneMatch) phone = phoneMatch[0];
-      }
-    });
-
-    // Pull designations from sibling nodes if empty
-    if (!designation) {
-      const nameEl = $('h4.color-white, h4').first();
-      if (nameEl.length > 0) {
-        const sib = nameEl.next('p');
-        if (sib.length > 0) {
-          designation = sib.text().trim();
-        }
-      }
-    }
-
-    // Identify sections (Publications, Specialization, Books, etc.)
-    // These sections in dynamic profile pages are usually structured inside h5 or h3
-    const sections: { title: string; content: string }[] = [];
-    $('h3, h4, h5, h6, b, strong').each((_, el) => {
-      const headingText = $(el).text().trim();
-      // Skip name or too short titles
-      if (!headingText || headingText.length < 3 || headingText.length > 60 || headingText === name) return;
-      
-      // Check if this looks like a section header (e.g. Specialization, Publication, Books, Grants, Research)
-      if (/specialization|publication|research|books|qualification|education|experience|grants|thesis|interests/i.test(headingText)) {
-        const contentLines: string[] = [];
-        let current = $(el).next();
-        
-        // Traverse siblings until the next heading or a line break
-        let maxSiblings = 15; // safety guard
-        while (current.length > 0 && maxSiblings > 0) {
-          const tagName = current[0].name;
-          if (['h1', 'h2', 'h3', 'h4', 'h5', 'h6'].includes(tagName)) {
-            break;
-          }
-          
-          if (tagName === 'ul' || tagName === 'ol') {
-            current.find('li').each((_, li) => {
-              const liText = $(li).text().trim();
-              if (liText) contentLines.push(`• ${liText}`);
-            });
-          } else {
-            const txt = current.text().replace(/\s+/g, ' ').trim();
-            if (txt.length > 5) {
-              contentLines.push(txt);
-            }
-          }
-          current = current.next();
-          maxSiblings--;
-        }
-        
-        if (contentLines.length > 0) {
-          sections.push({
-            title: headingText,
-            content: contentLines.join('\n')
-          });
-        }
-      }
-    });
-
-    // Construct clean structured markdown
-    const mdParts = [
-      `# Faculty Profile: ${name}`,
-      designation ? `- **Designation**: ${designation}` : '',
-      department ? `- **Department**: ${department}` : '',
-      email ? `- **Email**: ${email}` : '',
-      phone ? `- **Phone/Contact**: ${phone}` : '',
-      `- **Official URL**: ${url}`,
-      ''
-    ].filter(Boolean);
-
-    if (sections.length > 0) {
-      for (const sec of sections) {
-        mdParts.push(`## ${sec.title}`);
-        mdParts.push(sec.content);
-        mdParts.push('');
-      }
-    } else {
-      // If we couldn't find structured sections, let's grab the general text
-      // but without the site navigation boilerplate
-      $('script, style, noscript, iframe, header, footer, nav, .navbar, .menu').remove();
-      const bodyText = $('body').text().replace(/\s+/g, ' ').trim();
-      mdParts.push('## General Information');
-      mdParts.push(bodyText);
-    }
-
-    const structuredContent = mdParts.join('\n').trim();
-    
-    return {
-      title: `Faculty Profile - ${name}`,
-      content: structuredContent,
-      links
-    }
+    return extractFacultyProfile($, url, links)
   }
 
-  // ── Remove boilerplate for normal pages ───────────────────────────────────────
+  // ── Remove ALL boilerplate elements ──────────────────────────────────────
   $(
+    // Standard boilerplate
     'script, style, noscript, iframe, object, embed, ' +
     'nav, header, footer, aside, ' +
+    // CSS class-based
     '.nav, .navbar, .navigation, .menu, .header, .footer, .sidebar, ' +
     '.cookie-banner, .cookie-notice, .popup, .modal, .overlay, ' +
     '.social-share, .social-links, .share-buttons, ' +
     '.breadcrumb-nav, .pagination, .pager, ' +
+    '.wp-caption, .gallery, .related-posts, .post-navigation, ' +
+    // CUSIT-specific boilerplate selectors
+    '.site-header, .site-footer, .topbar, .bottom-bar, ' +
+    '.cusitnew-nav, #topnav, .main-nav, .footer-bottom, ' +
+    '.scroll-top, .back-to-top, .floating-btn, ' +
+    // ID-based
     '#nav, #header, #footer, #sidebar, #menu, ' +
-    '[role="navigation"], [role="banner"], [role="contentinfo"]'
+    '#topbar, #top-bar, #bottom-bar, ' +
+    // ARIA roles
+    '[role="navigation"], [role="banner"], [role="contentinfo"], ' +
+    '[role="complementary"]'
   ).remove()
 
-  // ── Extract title ────────────────────────────────────────────────────────────
+  // Also remove elements with these common text patterns (social links etc.)
+  $('a').filter((_, el) => {
+    const href = $(el).attr('href') || ''
+    return /facebook|twitter|youtube|linkedin|instagram|whatsapp/i.test(href)
+  }).closest('div, ul, li').remove()
+
+  // ── Extract title ────────────────────────────────────────────────────────
   const title = (
     $('h1').first().text().trim() ||
     $('title').text().trim() ||
     $('meta[property="og:title"]').attr('content') ||
     'Untitled Page'
-  ).replace(/\s+/g, ' ').slice(0, 200)
+  ).replace(/\s+/g, ' ').replace(/[-|] CUSIT.*$/i, '').trim().slice(0, 200)
 
-  // ── Extract main content ──────────────────────────────────────────────────────
-  // Try semantic main content containers first
+  // ── Try semantic content containers ──────────────────────────────────────
   const contentSelectors = [
     'main', 'article', '[role="main"]',
-    '#content', '#main-content', '#page-content', '.content',
-    '.main-content', '.entry-content', '.post-content',
+    '#content', '#main-content', '#page-content',
+    '.content', '.main-content', '.entry-content', '.post-content',
     '.page-content', '.article-content',
+    // CUSIT-specific
+    '.cusitnew-content', '.department-content', '.about-content',
+    '#main', '.container > .row',
   ]
 
-  let contentEl = $('body')
+  let contentEl: any = $('body')
   for (const sel of contentSelectors) {
     if ($(sel).length > 0) {
       contentEl = $(sel).first()
@@ -286,17 +347,17 @@ async function extractContent(html: string, url: string): Promise<{ title: strin
     }
   }
 
-  // Clean up remaining noise inside content
-  contentEl.find('.wp-caption, .gallery, .related-posts, .post-navigation').remove()
-
-  // Extract meaningful text: paragraphs, headings, lists, tables
+  // ── Extract structured text ───────────────────────────────────────────────
   const textParts: string[] = []
+  const seenTexts = new Set<string>() // Prevent duplicate paragraphs
 
-  contentEl.find('h1, h2, h3, h4, p, li, td, th, dt, dd, blockquote').each((_, el) => {
+  contentEl.find('h1, h2, h3, h4, p, li, td, th, dt, dd, blockquote').each((_: any, el: any) => {
     const tag = (el as any).tagName?.toLowerCase() || ''
     const text = $(el).text().replace(/\s+/g, ' ').trim()
 
     if (text.length < 10) return // Skip trivially short elements
+    if (seenTexts.has(text)) return // Skip duplicate text
+    seenTexts.add(text)
 
     if (['h1', 'h2', 'h3'].includes(tag)) {
       textParts.push(`\n## ${text}\n`)
@@ -316,34 +377,146 @@ async function extractContent(html: string, url: string): Promise<{ title: strin
   return { title, content, links }
 }
 
+/**
+ * Structured extractor for faculty profile pages.
+ * Returns clean markdown with name, designation, department, email, and sections.
+ */
+function extractFacultyProfile(
+  $: any,
+  url: string,
+  links: string[]
+): { title: string; content: string; links: string[] } {
+  const name = $('h4.color-white, h4, .profile-name, .name').first().text().trim() ||
+    $('title').text().split('|')[0].replace(/profile/i, '').replace(/cusit/i, '').replace(/[-|:]/g, '').trim() ||
+    'Faculty Member'
+
+  let designation = ''
+  let email = ''
+  let phone = ''
+  let department = ''
+
+  // Look for key-value info in tables or definition lists
+  $('body').find('tr, p, div').each((_: any, el: any) => {
+    const txt = $(el).text().replace(/\s+/g, ' ').trim()
+    const lower = txt.toLowerCase()
+
+    if (!email && lower.includes('@')) {
+      const match = txt.match(/[\w.-]+@[\w.-]+\.[a-zA-Z]{2,}/)
+      if (match) email = match[0]
+    }
+    if (!designation && (lower.includes('designation') || /lecturer|professor|assistant|associate|instructor/i.test(txt))) {
+      designation = txt.replace(/designation:?/i, '').trim().slice(0, 100)
+    }
+    if (!department && (lower.includes('department') || /faculty of|dept/i.test(txt))) {
+      department = txt.replace(/department:?|dept:?/i, '').trim().slice(0, 100)
+    }
+    if (!phone && (lower.includes('phone') || lower.includes('cell') || lower.includes('contact'))) {
+      const phoneMatch = txt.match(/[\d+-]{7,}/)
+      if (phoneMatch) phone = phoneMatch[0]
+    }
+  })
+
+  const sections: Array<{ title: string; content: string }> = []
+  
+  // Scrape research/education sections
+  $('h1, h2, h3, h4, h5, h6, strong, b').each((_: any, el: any) => {
+    const headingText = $(el).text().trim()
+    if (!headingText || headingText.length < 3 || headingText.length > 50) return
+
+    if (/qualification|education|experience|research|publication|specialization|interest|achievement/i.test(headingText)) {
+      const contentParts: string[] = []
+      let next = $(el).parent().next(); // Try checking siblings from parent if nested
+      if (next.length === 0) next = $(el).next();
+      
+      let limit = 8;
+      while (next.length > 0 && limit-- > 0) {
+        if (/h[1-6]/i.test(next[0].name)) break;
+        const text = next.text().replace(/\s+/g, ' ').trim()
+        if (text.length > 5) contentParts.push(text)
+        next = next.next()
+      }
+      
+      if (contentParts.length > 0) {
+        sections.push({ title: headingText, content: contentParts.join('\n') })
+      }
+    }
+  })
+
+  const mdParts = [
+    `# Teacher Profile: ${name}`,
+    designation ? `- **Designation**: ${designation}` : '',
+    department ? `- **Department**: ${department}` : '',
+    email ? `- **Email**: ${email}` : '',
+    phone ? `- **Phone**: ${phone}` : '',
+    `- **Official Profile**: ${url}`,
+    '',
+  ].filter(Boolean)
+
+  sections.forEach(sec => {
+    mdParts.push(`## ${sec.title}`)
+    mdParts.push(sec.content)
+    mdParts.push('')
+  })
+
+  return {
+    title: `Teacher: ${name}`,
+    content: mdParts.join('\n').trim(),
+    links,
+  }
+}
+
+// ─── Duplicate Content Detection ───────────────────────────────────────────────
+
+/**
+ * Checks if content is substantially similar to already-processed pages.
+ * Uses a fast character-level shingle comparison.
+ * Prevents re-embedding near-identical pages (e.g., paginated lists).
+ */
+const processedContentHashes = new Set<string>()
+
+function isNearDuplicate(content: string): boolean {
+  const fingerprint = crypto
+    .createHash('md5')
+    .update(content.slice(0, 1000).toLowerCase().replace(/\s+/g, ' '))
+    .digest('hex')
+    .slice(0, 16)
+
+  if (processedContentHashes.has(fingerprint)) return true
+  processedContentHashes.add(fingerprint)
+  return false
+}
+
 // ─── Page Processor ────────────────────────────────────────────────────────────
 
 async function processPage(url: string): Promise<PageResult> {
   try {
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; CubotCrawler/1.0; +https://cusit.edu.pk/cubot)',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
-        'Cache-Control': 'no-cache',
-      },
-      signal: AbortSignal.timeout(15000), // 15s timeout per page
-    })
+    // Check if we've seen this page before (for incremental crawling)
+    const lastScrapedAt = INCREMENTAL ? await getLastScrapedAt(url) : null
 
-    if (!response.ok) {
-      return { url, title: '', content: '', status: 'failed', error: `HTTP ${response.status}` }
+    const { html, status, error } = await fetchPageWithChangeDetection(url, lastScrapedAt ?? undefined)
+
+    if (status === 'unchanged') {
+      stats.pagesUnchanged++
+      return { url, title: '', content: '', status: 'skipped', error: 'Unchanged (304/hash match)' }
     }
 
-    const contentType = response.headers.get('content-type') || ''
-    if (!contentType.includes('text/html')) {
-      return { url, title: '', content: '', status: 'skipped', error: 'Non-HTML content' }
+    if (status === 'failed') {
+      return { url, title: '', content: '', status: 'failed', error }
     }
 
-    const html = await response.text()
+    if (html.length < 200) {
+      return { url, title: '', content: '', status: 'skipped', error: 'Insufficient HTML (may need JS rendering)' }
+    }
+
     const { title, content, links } = await extractContent(html, url)
 
-    if (content.length < 100) {
-      return { url, title, content, status: 'skipped', error: 'Insufficient content (may require JS rendering)' }
+    if (content.length < 50) {
+      return { url, title, content, status: 'skipped', error: 'Insufficient content after extraction' }
+    }
+
+    // Near-duplicate check (skip pages with very similar content)
+    if (isNearDuplicate(content)) {
+      return { url, title, content, status: 'skipped', error: 'Near-duplicate content detected' }
     }
 
     const contentHash = crypto.createHash('md5').update(content).digest('hex')
@@ -351,7 +524,7 @@ async function processPage(url: string): Promise<PageResult> {
     const breadcrumb = buildBreadcrumb(url)
     const parentPageId = uuidv4()
 
-    // Semantic chunking
+    // Semantic chunking with keyword extraction
     const chunks = semanticChunk(content, {
       title,
       sourceUrl: url,
@@ -366,7 +539,12 @@ async function processPage(url: string): Promise<PageResult> {
 
     if (!DRY_RUN && chunks.length > 0) {
       const result = await upsertPageChunks({
-        chunks: chunks.map(c => ({ text: c.text, chunkIndex: c.metadata.chunkIndex })),
+        chunks: chunks.map(c => ({
+          text: c.text,
+          chunkIndex: c.metadata.chunkIndex,
+          keywords: (c.metadata as any).keywords || [],
+          sectionName: (c.metadata as any).sectionName || '',
+        })),
         title,
         category: classification.category,
         sourceUrl: url,
@@ -385,8 +563,7 @@ async function processPage(url: string): Promise<PageResult> {
       stats.pagesUpdated++
     }
 
-    return { url, title, content, status: 'success', chunksCreated: chunks.length, links } as any
-
+    return { url, title, content, status: 'success', chunksCreated: chunks.length, links }
   } catch (error: any) {
     return { url, title: '', content: '', status: 'failed', error: error.message }
   }
@@ -394,155 +571,127 @@ async function processPage(url: string): Promise<PageResult> {
 
 // ─── Main Crawler ──────────────────────────────────────────────────────────────
 
-const SEED_URLS = [
-  'https://www.cusit.edu.pk',
-  'https://cusit.edu.pk/cusitnew/cs/faculty.php',
-  'https://cusit.edu.pk/cusitnew/se/faculty.php',
-  'https://cusit.edu.pk/cusitnew/bba/faculty.php',
-  'https://cusit.edu.pk/cusitnew/pharmacy/faculty.php',
-  'https://cusit.edu.pk/cusitnew/nursing/faculty.php',
-  'https://cusit.edu.pk/cusitnew/civil/faculty.php',
-  'https://cusit.edu.pk/cusitnew/electrical/faculty.php',
-  'https://cusit.edu.pk/admissions.php',
-]
-
 async function runCrawler() {
-  console.log(`\n🤖 Cubot Full-Site Crawler`)
-  console.log(`   Run ID:     ${stats.runId}`)
-  console.log(`   Seeds:      ${SEED_URLS.join(', ')}`)
-  console.log(`   Max pages:  ${MAX_PAGES}`)
+  console.log(`\n🤖 Cubot Enterprise Crawler Worker`)
+  console.log(`   Polling crawl_queue...`)
+  console.log(`   Max pages/session: ${MAX_PAGES}`)
   console.log(`   Concurrency: ${CONCURRENCY}`)
-  console.log(`   Dry run:    ${DRY_RUN}`)
-  console.log(`   Started at: ${stats.startedAt.toISOString()}\n`)
 
-  // Record run in DB
-  if (!DRY_RUN) {
+  // Load robots.txt before crawling
+  await loadRobotsTxt(BASE_URL)
+
+  // ── Insert a crawl_runs row so the observability dashboard tracks this run ──
+  try {
     await sql`
-      INSERT INTO crawl_stats (run_id, status) VALUES (${stats.runId}, 'running')
-    `.catch(() => {}) // Non-fatal
+      INSERT INTO crawl_runs (id, status, started_at)
+      VALUES (${stats.runId}, 'running', ${stats.startedAt.toISOString()})
+    `
+    console.log(`📋 Crawl run registered: ${stats.runId}`)
+  } catch (e: any) {
+    console.warn(`⚠️  Could not register crawl run (non-fatal): ${e.message}`)
   }
 
-  const visited = new Set<string>()
-  const queue: QueueItem[] = SEED_URLS.map(url => ({ url, depth: 0, parentUrl: '' }))
-  const documentQueue: string[] = []
+  let idleCount = 0;
 
-  // BFS crawl with concurrency
-  while (queue.length > 0 && stats.pagesCrawled < MAX_PAGES) {
-    // Take up to CONCURRENCY items at once
-    const batch = queue.splice(0, CONCURRENCY)
+  while (true) {
+    // Check for paused status — always use our own run ID
+    const activeRuns = await sql`SELECT id, status FROM crawl_runs WHERE id = ${stats.runId} LIMIT 1`.catch(()=>[])
+    if (activeRuns.length > 0 && activeRuns[0].status === 'paused') {
+      console.log('⏸️  Crawl paused. Waiting...')
+      await new Promise(r => setTimeout(r, 10000))
+      continue
+    }
 
-    const batchResults = await Promise.all(
-      batch.map(async (item) => {
-        if (visited.has(item.url)) return null
-        visited.add(item.url)
+    // Get next URL
+    const nextItems = await sql`
+      UPDATE crawl_queue
+      SET status = 'processing', updated_at = CURRENT_TIMESTAMP
+      WHERE id = (
+        SELECT id FROM crawl_queue
+        WHERE status = 'pending'
+        ORDER BY priority ASC, created_at ASC
+        LIMIT 1
+      )
+      RETURNING *
+    `.catch(()=>[])
 
-        // Rate limiting
-        await new Promise(r => setTimeout(r, REQUEST_DELAY_MS))
+    if (!nextItems || nextItems.length === 0) {
+      idleCount++
+      if (idleCount % 12 === 0) {
+        console.log(`💤 Queue empty, waiting...`)
+      }
+      await new Promise(r => setTimeout(r, 5000))
+      continue
+    }
 
-        if (isDocumentUrl(item.url)) {
-          documentQueue.push(item.url)
-          return null
+    idleCount = 0
+    const item = nextItems[0]
+    console.log(`📄 [Depth: ${item.depth}] ${item.url}`)
+
+    const result = await processPage(item.url)
+
+    // Add links to queue if successful
+    if (result.status === 'success') {
+      const links = result.links || []
+      for (const link of links) {
+        if (isAllowedUrl(link)) {
+          const isProfile = link.includes('profile.php') || link.includes('faculty/') || link.includes('staff/')
+          const linkPriority = isProfile ? 1
+            : link.includes('admiss') || link.includes('fee') ? 2
+            : item.priority + 1
+            
+          await sql`
+            INSERT INTO crawl_queue (url, depth, priority)
+            VALUES (${link}, ${item.depth + 1}, ${linkPriority})
+            ON CONFLICT (url) DO NOTHING
+          `.catch(()=>{})
         }
-
-        console.log(`📄 [${stats.pagesCrawled + 1}/${MAX_PAGES}] ${item.url}`)
-        const result = await processPage(item.url)
-        stats.pagesCrawled++
-
-        if (result.status === 'success') {
-          // Enqueue discovered links
-          const links = (result as any).links as string[] | undefined
-          if (links) {
-            for (const link of links) {
-              if (!visited.has(link) && isAllowedUrl(link)) {
-                if (isDocumentUrl(link)) {
-                  documentQueue.push(link)
-                } else if (item.depth < 10) { // Max depth guard
-                  queue.push({ url: link, depth: item.depth + 1, parentUrl: item.url })
-                }
-              }
-            }
-          }
-          console.log(`  ✅ ${result.chunksCreated} chunks | ${result.title?.slice(0, 50)}`)
-        } else if (result.status === 'skipped') {
-          stats.pagesSkipped++
-          console.log(`  ⏭️  Skipped: ${result.error}`)
-        } else {
-          stats.pagesFailed++
-          console.log(`  ❌ Failed: ${result.error}`)
-          if (!DRY_RUN) {
-            await sql`
-              INSERT INTO crawl_failed_pages (run_id, url, error)
-              VALUES (${stats.runId}, ${item.url}, ${result.error})
-            `.catch(() => {})
-          }
-        }
-
-        return result
-      })
-    )
-  }
-
-  // ── Process discovered documents ───────────────────────────────────────────
-  if (documentQueue.length > 0) {
-    console.log(`\n📎 Processing ${documentQueue.length} discovered documents...`)
-    for (const docUrl of documentQueue) {
-      if (!DRY_RUN) {
-        try {
-          console.log(`  📄 ${docUrl}`)
-          const docResult = await processDocument(docUrl)
-          if (docResult.success) {
-            stats.documentsProcessed++
-            stats.chunksCreated += docResult.chunksCreated
-            console.log(`  ✅ ${docResult.chunksCreated} chunks from document`)
-          } else {
-            console.log(`  ❌ Document failed: ${docResult.error}`)
-          }
-        } catch (err: any) {
-          console.log(`  ❌ Document error: ${err.message}`)
-        }
-      } else {
-        console.log(`  [DRY RUN] Would process document: ${docUrl}`)
-        stats.documentsProcessed++
+      }
+      await sql`UPDATE crawl_queue SET status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE id = ${item.id}`.catch(()=>{})
+      
+      // Update stats
+      if (activeRuns.length > 0) {
+         await sql`UPDATE crawl_runs SET pages_crawled = pages_crawled + 1, chunks_created = chunks_created + ${result.chunksCreated || 0} WHERE id = ${activeRuns[0].id}`.catch(()=>{})
+      }
+    } else if (result.status === 'skipped') {
+      await sql`UPDATE crawl_queue SET status = 'completed', error = ${result.error || 'skipped'}, updated_at = CURRENT_TIMESTAMP WHERE id = ${item.id}`.catch(()=>{})
+      if (activeRuns.length > 0) {
+         await sql`UPDATE crawl_runs SET pages_skipped = pages_skipped + 1 WHERE id = ${activeRuns[0].id}`.catch(()=>{})
+      }
+    } else {
+      await sql`UPDATE crawl_queue SET status = 'failed', error = ${result.error || 'failed'}, updated_at = CURRENT_TIMESTAMP WHERE id = ${item.id}`.catch(()=>{})
+      
+      // log to failed_urls
+      const activeRun = activeRuns.length > 0 ? activeRuns[0].id : null
+      let category = 'other'
+      if (result.error?.includes('404')) category = '404'
+      else if (result.error?.includes('timeout')) category = 'timeout'
+      
+      await sql`
+        INSERT INTO failed_urls (run_id, url, error_category, error_details)
+        VALUES (${activeRun}, ${item.url}, ${category}, ${result.error})
+      `.catch(()=>{})
+      
+      if (activeRuns.length > 0) {
+         await sql`UPDATE crawl_runs SET pages_failed = pages_failed + 1 WHERE id = ${activeRuns[0].id}`.catch(()=>{})
       }
     }
+    
+    await new Promise(r => setTimeout(r, REQUEST_DELAY_MS))
   }
-
-  // ── Finalize ───────────────────────────────────────────────────────────────
-  const durationSeconds = Math.round((Date.now() - stats.startedAt.getTime()) / 1000)
-
-  if (!DRY_RUN) {
-    await sql`
-      UPDATE crawl_stats SET
-        pages_crawled       = ${stats.pagesCrawled},
-        pages_failed        = ${stats.pagesFailed},
-        pages_updated       = ${stats.pagesUpdated},
-        pages_skipped       = ${stats.pagesSkipped},
-        documents_processed = ${stats.documentsProcessed},
-        chunks_created      = ${stats.chunksCreated},
-        embeddings_created  = ${stats.embeddingsCreated},
-        duration_seconds    = ${durationSeconds},
-        status              = 'completed',
-        completed_at        = CURRENT_TIMESTAMP
-      WHERE run_id = ${stats.runId}
-    `.catch(() => {})
-  }
-
-  console.log(`\n✅ Crawl Complete!`)
-  console.log(`   Pages crawled:      ${stats.pagesCrawled}`)
-  console.log(`   Pages updated:      ${stats.pagesUpdated}`)
-  console.log(`   Pages skipped:      ${stats.pagesSkipped}`)
-  console.log(`   Pages failed:       ${stats.pagesFailed}`)
-  console.log(`   Documents:          ${stats.documentsProcessed}`)
-  console.log(`   Chunks created:     ${stats.chunksCreated}`)
-  console.log(`   Duration:           ${durationSeconds}s`)
-  console.log(`   Run ID:             ${stats.runId}`)
 }
 
-runCrawler().catch(async (error) => {
-  console.error('💥 Crawler crashed:', error)
-  await sql`
-    UPDATE crawl_stats SET status = 'failed', error_log = ${error.message}, completed_at = CURRENT_TIMESTAMP
-    WHERE run_id = ${stats.runId}
-  `.catch(() => {})
-  process.exit(1)
-})
+// ─── Export for programmatic use ─────────────────────────────────────────────
+export { runCrawler }
+
+// Only run automatically if executed directly via tsx/node
+if (require.main === module) {
+  runCrawler().catch(async (error) => {
+    console.error('💥 Crawler crashed:', error)
+    await sql`
+      UPDATE crawl_stats SET status = 'failed', error_log = ${error.message}, completed_at = CURRENT_TIMESTAMP
+      WHERE run_id = ${stats.runId}
+    `.catch(() => {})
+    process.exit(1)
+  })
+}

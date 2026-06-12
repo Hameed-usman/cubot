@@ -19,6 +19,7 @@ export interface ChatRequest {
   message: string
   conversationHistory: Pick<Message, 'role' | 'content'>[]
   department?: Department
+  sessionId?: string
 }
 
 export interface ChatResponse {
@@ -179,4 +180,55 @@ export interface ChatState {
   messages: Message[]
   isLoading: boolean
   error: string | null
+}
+
+// ─── Database Models ──────────────────────────────────────────────
+
+export interface DbConversation {
+  id: string
+  session_id: string
+  user_message: string
+  bot_response: string
+  persona?: string
+  language?: string
+  response_source?: 'cache' | 'ai_fresh' | 'tier2' | 'tier3'
+  is_unanswered: boolean
+  feedback?: string
+  created_at: Date
+}
+
+export interface DbUnansweredQuestion {
+  id: string
+  conversation_id?: string
+  question_text: string
+  language?: string
+  persona?: string
+  tier_reached?: string
+  resolved: boolean
+  resolved_entry_id?: string
+  resolved_at?: Date
+  created_at: Date
+}
+
+export interface DbAdminConfig {
+  id: string
+  key: string
+  value: string
+  updated_at: Date
+}
+
+export interface DbRateLimit {
+  id: string
+  session_id: string
+  request_count: number
+  window_start: Date
+  updated_at: Date
+}
+
+export interface DbFeedbackLog {
+  id: string
+  conversation_id?: string
+  session_id: string
+  feedback: string
+  created_at: Date
 }

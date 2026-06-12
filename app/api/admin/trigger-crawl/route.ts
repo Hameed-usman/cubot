@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { requireAdminAuth } from '@/lib/adminAuth'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -20,12 +21,8 @@ export const maxDuration = 300 // 5 minutes max (Vercel Pro)
  */
 export async function GET(request: NextRequest): Promise<NextResponse> {
   // ── Auth check ──────────────────────────────────────────────────────────────
-  const authHeader = request.headers.get('Authorization')
-  const token = authHeader?.replace('Bearer ', '').trim()
-
-  if (!process.env.CRON_SECRET || token !== process.env.CRON_SECRET) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  const authRes = await requireAdminAuth(request)
+  if (authRes) return authRes
 
   const mode = request.nextUrl.searchParams.get('mode') || 'webhook'
 
@@ -86,14 +83,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
  * Requires NextAuth session.
  */
 export async function POST(request: NextRequest): Promise<NextResponse> {
-  const { getServerSession } = await import('next-auth')
-  const session = await getServerSession()
+  const authRes = await requireAdminAuth(request)
+  if (authRes) return authRes
 
-  if (!session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-
-  // Trigger GitHub Actions if configured
+  // Option A: Trigger GitHub Actions if configured (for production)
   if (process.env.GITHUB_TOKEN && process.env.GITHUB_REPO) {
     try {
       const [owner, repo] = process.env.GITHUB_REPO.split('/')
@@ -114,19 +107,32 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       if (response.ok) {
         return NextResponse.json({
           success: true,
-          message: 'Sync job dispatched to GitHub Actions! It will complete in 10–15 minutes.',
+          message: '✓ Sync job dispatched! Your knowledge base will update in 10–15 minutes via GitHub Actions.',
           mode: 'github_actions',
         })
       }
     } catch {
-      // Fall through to manual instructions
+      // Fall through to inline crawl
     }
   }
 
-  return NextResponse.json({
-    success: true,
-    message: 'To sync knowledge base, run: npm run crawl — from your project directory.',
-    mode: 'manual',
-    hint: 'Configure GITHUB_TOKEN and GITHUB_REPO in your .env.local to enable one-click sync from this dashboard.',
-  })
+  // Option B: Run inline crawler (works in local dev and self-hosted)
+  try {
+    const { runCrawler } = await import('@/scripts/full-site-scraper')
+    // Run without awaiting fully — return immediately and let it run async
+    // We kick it off but return a "started" response
+    runCrawler().catch((err: Error) => console.error('[Sync] Background crawl error:', err))
+
+    return NextResponse.json({
+      success: true,
+      message: '✓ Full knowledge sync started! This may take 3–8 minutes. The bot will answer better after it completes.',
+      mode: 'inline',
+    })
+  } catch (err: any) {
+    return NextResponse.json({
+      success: false,
+      message: `⚠ Could not start sync: ${err.message}. Try using the Quick Sync for a specific URL instead.`,
+      mode: 'error',
+    }, { status: 500 })
+  }
 }

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { spawn } from 'child_process'
 import path from 'path'
+import { requireAdminAuth } from '@/lib/adminAuth'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -8,13 +9,9 @@ export const dynamic = 'force-dynamic'
 // Note: To secure this route, you should add an API key or session check.
 export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
-    const authHeader = request.headers.get('authorization')
-    const expectedKey = process.env.CRON_SECRET || 'secret_cron_key'
-    
-    // Check if authorization is provided and matches
-    if (authHeader !== `Bearer ${expectedKey}`) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const authRes = await requireAdminAuth(request)
+    if (authRes) return authRes
+
 
     // Spawn the scraper in a detached background process so the API route can return immediately
     // without waiting for the crawl to finish (which could take 5-10 minutes and time out).

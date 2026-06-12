@@ -9,6 +9,13 @@ import {
 import { getDepartmentData, saveDepartmentData } from '../actions/admin'
 import { signOut } from 'next-auth/react'
 import SyncIntelligenceTab from '@/components/admin/SyncIntelligenceTab'
+import AnalyticsTab from '@/components/admin/AnalyticsTab'
+import SecurityTab from '@/components/admin/SecurityTab'
+import KnowledgeListTab from '@/components/admin/KnowledgeListTab'
+import UnansweredTab from '@/components/admin/UnansweredTab'
+import { LineChart, Shield, Database, HelpCircle } from 'lucide-react'
+import { useSession } from 'next-auth/react'
+import { useRouter } from 'next/navigation'
 
 const departments = ['general', 'cs_it', 'bba', 'pharmacy', 'nursing']
 const departmentNames: Record<string, string> = {
@@ -31,9 +38,11 @@ const sections = [
   { id: 'faculty', label: 'Faculty', icon: Users },
 ]
 
-type AdminView = 'editor' | 'sync'
+type AdminView = 'editor' | 'sync' | 'analytics' | 'security' | 'knowledge' | 'unanswered'
 
 export default function AdminPage() {
+  const { data: session, status } = useSession()
+  const router = useRouter()
   const [adminView, setAdminView] = useState<AdminView>('editor')
   const [selectedDept, setSelectedDept] = useState('general')
   const [activeSection, setActiveSection] = useState('overview')
@@ -45,14 +54,23 @@ export default function AdminPage() {
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
+    if (status === 'unauthenticated') {
+      router.push('/login')
+    }
+  }, [status, router])
+
+  useEffect(() => {
     async function loadData() {
       setIsLoading(true)
       const data = await getDepartmentData(selectedDept, activeSection)
       setContent(data)
       setIsLoading(false)
     }
-    loadData()
-  }, [selectedDept, activeSection])
+    // Only load if authenticated and view is editor
+    if (session && adminView === 'editor') {
+      loadData()
+    }
+  }, [selectedDept, activeSection, session, adminView])
 
   const handleSave = async (contentToSave: string) => {
     setIsSaving(true)
@@ -67,6 +85,16 @@ export default function AdminPage() {
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current)
     saveTimeoutRef.current = setTimeout(() => handleSave(newContent), 1200)
   }
+
+  if (status === 'loading') {
+    return (
+      <div className="min-h-screen bg-[#050505] flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-cu-gold" />
+      </div>
+    )
+  }
+
+  if (!session) return null
 
   return (
     <div className="min-h-screen flex flex-col" style={{ background: 'linear-gradient(160deg,#080d1a 0%,#0d1526 60%,#080d1a 100%)' }}>
@@ -94,7 +122,13 @@ export default function AdminPage() {
               System Online
             </span>
             {/* View toggle */}
-            <button onClick={() => setAdminView(v => v === 'editor' ? 'sync' : 'editor')} aria-label="Toggle sync view"
+            <button onClick={() => setAdminView(v => v === 'analytics' ? 'editor' : 'analytics')}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold font-display transition-all"
+              style={{ background: adminView === 'analytics' ? 'rgba(59,130,246,0.15)' : 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: adminView === 'analytics' ? '#3b82f6' : 'rgba(255,255,255,0.6)' }}>
+              <LineChart className="w-4 h-4" />
+              Intelligence
+            </button>
+            <button onClick={() => setAdminView(v => v === 'sync' ? 'editor' : 'sync')} aria-label="Toggle sync view"
               className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold font-display transition-all"
               style={{ background: adminView === 'sync' ? 'rgba(201,162,39,0.15)' : 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: adminView === 'sync' ? '#c9a227' : 'rgba(255,255,255,0.6)' }}>
               {adminView === 'sync' ? <BookOpen className="w-4 h-4" /> : <Globe className="w-4 h-4" />}
@@ -108,6 +142,24 @@ export default function AdminPage() {
                 {previewMode ? 'Edit' : 'Preview'}
               </button>
             )}
+            <button onClick={() => setAdminView(v => v === 'security' ? 'editor' : 'security')} aria-label="Toggle security view"
+              className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold font-display transition-all"
+              style={{ background: adminView === 'security' ? 'rgba(244,63,94,0.15)' : 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: adminView === 'security' ? '#f43f5e' : 'rgba(255,255,255,0.6)' }}>
+              <Shield className="w-4 h-4" />
+              Security
+            </button>
+            <button onClick={() => setAdminView(v => v === 'knowledge' ? 'editor' : 'knowledge')} aria-label="Toggle knowledge view"
+              className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold font-display transition-all"
+              style={{ background: adminView === 'knowledge' ? 'rgba(201,162,39,0.15)' : 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: adminView === 'knowledge' ? '#c9a227' : 'rgba(255,255,255,0.6)' }}>
+              <Database className="w-4 h-4" />
+              Knowledge
+            </button>
+            <button onClick={() => setAdminView(v => v === 'unanswered' ? 'editor' : 'unanswered')} aria-label="Toggle unanswered view"
+              className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold font-display transition-all"
+              style={{ background: adminView === 'unanswered' ? 'rgba(249,115,22,0.15)' : 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: adminView === 'unanswered' ? '#f97316' : 'rgba(255,255,255,0.6)' }}>
+              <HelpCircle className="w-4 h-4" />
+              Unanswered
+            </button>
             <button onClick={() => signOut({ callbackUrl: '/admin/login' })} aria-label="Sign out"
               className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold font-sans transition-all text-red-400 hover:text-red-300"
               style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.15)' }}>
@@ -120,8 +172,20 @@ export default function AdminPage() {
 
       {/* Body */}
       <div className="flex-1 max-w-7xl mx-auto w-full px-4 py-6 md:px-6 md:py-8">
+        {adminView === 'analytics' && (
+          <AnalyticsTab />
+        )}
         {adminView === 'sync' && (
           <SyncIntelligenceTab />
+        )}
+        {adminView === 'security' && (
+          <SecurityTab />
+        )}
+        {adminView === 'knowledge' && (
+          <KnowledgeListTab />
+        )}
+        {adminView === 'unanswered' && (
+          <UnansweredTab />
         )}
         {adminView === 'editor' && (
         <div className="grid md:grid-cols-4 gap-6 h-full">

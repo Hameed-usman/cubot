@@ -64,8 +64,13 @@ const CLASSIFICATION_RULES: ClassificationRule[] = [
 export function classifyPage(url: string, title: string): Classification {
   const combined = `${url} ${title}`.toLowerCase()
 
-  // High-priority check for Faculty/Staff (including profile.php)
-  if (url.includes('profile.php') || /faculty|staff|professor|lecturer|instructor|dean|rector|director/i.test(combined)) {
+  // High-priority check for Faculty/Staff (including profile.php and bio pages)
+  if (
+    url.includes('profile.php') || 
+    url.includes('faculty') || 
+    url.includes('teacher') ||
+    /faculty|staff|professor|lecturer|instructor|dean|rector|director|bio|cv|resume|teacher|scholar|scientist|educator/i.test(combined)
+  ) {
     let department = 'general'
     if (/\b(cs|cse|it|software.?eng|computer.?science|information.?technology|bscs|bsit|bsse)\b/i.test(combined)) {
       department = 'cs_it'
@@ -76,10 +81,16 @@ export function classifyPage(url: string, title: string): Classification {
     } else if (/nurs(ing|e)|midwifery|bs.?nursing/i.test(combined)) {
       department = 'nursing'
     }
-    return {
-      pageType: 'faculty',
-      category: 'Faculty',
-      department,
+
+    // Ensure it's marked as Faculty if it's a profile or has strong keywords
+    const isStrongProfileMatch = url.includes('profile.php') || /professor|lecturer|instructor|dean/i.test(combined);
+    
+    if (isStrongProfileMatch) {
+      return {
+        pageType: 'faculty',
+        category: 'Faculty',
+        department,
+      }
     }
   }
 

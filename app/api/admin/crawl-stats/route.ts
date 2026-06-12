@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
+import { requireAdminAuth } from '@/lib/adminAuth'
 import sql from '@/lib/db'
 import { CrawlDashboardData } from '@/types'
 
@@ -14,10 +15,9 @@ export const dynamic = 'force-dynamic'
 export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
     // Auth check
-    const session = await getServerSession()
-    if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const authRes = await requireAdminAuth(request)
+    if (authRes) return authRes
+
 
     // Run all queries in parallel for speed
     const [

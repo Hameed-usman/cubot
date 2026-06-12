@@ -15,13 +15,10 @@ export function ChatWindow() {
   const [messages, setMessages] = useState<Message[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [sessionId] = useState(() => crypto.randomUUID())
   const messagesEndRef = useRef<HTMLDivElement>(null)
   // Ref-based guard — prevents any double-call regardless of React batching or StrictMode
   const isSubmittingRef = useRef(false)
-
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, isLoading])
 
   const handleSubmit = useCallback(async (message: string) => {
     if (!message.trim()) return
@@ -49,6 +46,7 @@ export function ChatWindow() {
         body: JSON.stringify({
           message,
           conversationHistory: messages.slice(-6).map(({ role, content }) => ({ role, content })),
+          sessionId,
         }),
       })
 
@@ -57,19 +55,72 @@ export function ChatWindow() {
         throw new Error(errorData.error || 'Request failed. Please try again.')
       }
 
-      const data = await response.json()
+      const reader = response.body?.getReader()
+      if (!reader) throw new Error('No stream available')
 
+      const decoder = new TextDecoder()
+      let fullAccumulated = ''
+
+      // Add the initial message shell
       setMessages((prev) => [
         ...prev,
         {
           id: assistantMessageId,
           role: 'assistant',
-          content: data.message,
-          intent: data.intent,
-          suggestions: data.suggestions,
+          content: '',
           timestamp: new Date(),
         },
       ])
+      setIsLoading(false) // Stop main loading, start streaming
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        const chunk = decoder.decode(value, { stream: true })
+        fullAccumulated += chunk
+
+        // Show clean text in real-time — strip everything from [METADATA] onward
+        const metaIdx = fullAccumulated.indexOf('[METADATA]')
+        const displayText = metaIdx !== -1
+          ? fullAccumulated.slice(0, metaIdx)
+          : fullAccumulated
+
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === assistantMessageId
+              ? { ...msg, content: displayText }
+              : msg
+          )
+        )
+      }
+
+      // Final: parse metadata block for suggestions + citations
+      const metaIdx = fullAccumulated.indexOf('[METADATA]')
+      if (metaIdx !== -1) {
+        const cleanContent = fullAccumulated.slice(0, metaIdx).trim()
+        const metaStr = fullAccumulated.slice(metaIdx + '[METADATA]'.length).trim()
+        try {
+          const meta = JSON.parse(metaStr)
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === assistantMessageId
+                ? { ...msg, content: cleanContent, suggestions: Array.isArray(meta.suggestions) ? meta.suggestions : [] }
+                : msg
+            )
+          )
+        } catch (e) {
+          // If JSON parse fails, still clean the content
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === assistantMessageId
+                ? { ...msg, content: cleanContent }
+                : msg
+            )
+          )
+          console.warn('[Chat] Failed to parse stream metadata:', e)
+        }
+      }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'An error occurred'
       setError(errorMessage)
@@ -87,7 +138,11 @@ export function ChatWindow() {
       setIsLoading(false)
       isSubmittingRef.current = false
     }
-  }, [messages])
+  }, [messages, sessionId])
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages, sessionId, isLoading, handleSubmit])
 
   const handleSuggestedQuestion = useCallback((question: string) => {
     handleSubmit(question)
@@ -178,6 +233,7 @@ export function ChatWindow() {
             <MessageBubble
               key={message.id}
               message={message}
+              sessionId={sessionId}
               isLatestBot={message.id === latestBotId && message.role === 'assistant' && !isLoading}
               onSelectSuggestion={handleSuggestedQuestion}
             />

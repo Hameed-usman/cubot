@@ -1,14 +1,21 @@
 import { GoogleGenerativeAI } from '@google/generative-ai'
 
 /**
- * Production-grade embedding module using Google text-embedding-004.
- * Outputs 768-dimensional semantic vectors — matching Pinecone index dimension.
+ * Production-grade embedding module using Google gemini-embedding-001.
+ *
+ * gemini-embedding-001 natively outputs 3072-dim vectors, but supports
+ * Matryoshka Representation Learning (MRL) — allowing truncation to smaller
+ * sizes (128, 768, 1536, 3072) without retraining.
+ *
+ * We request 768 dimensions via `outputDimensionality` so vectors match the
+ * existing Pinecone index (768-dim) without requiring a rebuild.
  *
  * Falls back gracefully if GEMINI_API_KEY is not set (for local dev without keys).
  */
 
 const EMBEDDING_MODEL = 'gemini-embedding-001'
-const BATCH_SIZE = 100 // Gemini API batch limit
+const OUTPUT_DIMENSIONALITY = 768  // MRL truncation — matches Pinecone index dimension
+const BATCH_SIZE = 100             // Gemini API batch limit
 const RETRY_ATTEMPTS = 3
 const RETRY_DELAY_MS = 1000
 
@@ -33,8 +40,8 @@ function sleep(ms: number) {
 }
 
 /**
- * Embed a single text string using Gemini text-embedding-004.
- * Returns a real 768-dimensional semantic vector.
+ * Embed a single text string using gemini-embedding-001 with MRL truncation to 768-dim.
+ * Returns a real 768-dimensional semantic vector compatible with the Pinecone index.
  * Retries up to 3 times on transient failures.
  */
 export async function embedText(text: string): Promise<number[]> {
@@ -43,7 +50,7 @@ export async function embedText(text: string): Promise<number[]> {
   if (!client) {
     // Graceful degradation: return zero vector (retrieval will still work, just poorly)
     console.warn('[Embeddings] Returning zero vector — configure GEMINI_API_KEY for real embeddings.')
-    return new Array(768).fill(0)
+    return new Array(OUTPUT_DIMENSIONALITY).fill(0)
   }
 
   const model = client.getGenerativeModel({ model: EMBEDDING_MODEL })
@@ -51,7 +58,12 @@ export async function embedText(text: string): Promise<number[]> {
 
   for (let attempt = 1; attempt <= RETRY_ATTEMPTS; attempt++) {
     try {
-      const result = await model.embedContent(cleanText)
+      const result = await model.embedContent({
+        content: { role: 'user', parts: [{ text: cleanText }] },
+        taskType: 'RETRIEVAL_DOCUMENT',
+        // MRL: truncate from 3072 → 768 to match Pinecone index
+        outputDimensionality: OUTPUT_DIMENSIONALITY,
+      } as any)
       return result.embedding.values
     } catch (error: any) {
       const isRateLimit = error?.status === 429 || error?.message?.includes('429')
@@ -68,11 +80,11 @@ export async function embedText(text: string): Promise<number[]> {
     }
   }
 
-  return new Array(768).fill(0)
+  return new Array(OUTPUT_DIMENSIONALITY).fill(0)
 }
 
 /**
- * Embed multiple texts in batches.
+ * Embed multiple texts in batches using gemini-embedding-001 with MRL truncation to 768-dim.
  * Respects Gemini's batch limits and includes rate-limit-safe delays between batches.
  *
  * @param texts - Array of strings to embed
@@ -83,7 +95,7 @@ export async function embedBatch(texts: string[]): Promise<number[][]> {
 
   if (!client) {
     console.warn('[Embeddings] Returning zero vectors — configure GEMINI_API_KEY.')
-    return texts.map(() => new Array(768).fill(0))
+    return texts.map(() => new Array(OUTPUT_DIMENSIONALITY).fill(0))
   }
 
   const model = client.getGenerativeModel({ model: EMBEDDING_MODEL })
@@ -97,7 +109,12 @@ export async function embedBatch(texts: string[]): Promise<number[][]> {
         const batchResults = await Promise.all(
           batch.map(async (text) => {
             const clean = text.trim().slice(0, 10000)
-            const res = await model.embedContent(clean)
+            const res = await model.embedContent({
+              content: { role: 'user', parts: [{ text: clean }] },
+              taskType: 'RETRIEVAL_DOCUMENT',
+              // MRL: truncate from 3072 → 768 to match Pinecone index
+              outputDimensionality: OUTPUT_DIMENSIONALITY,
+            } as any)
             return res.embedding.values
           })
         )
@@ -112,7 +129,7 @@ export async function embedBatch(texts: string[]): Promise<number[][]> {
         if (attempt === RETRY_ATTEMPTS) {
           console.error(`[Embeddings] Batch ${i / BATCH_SIZE + 1} failed:`, error?.message)
           // Push zero vectors for failed batch so pipeline doesn't break
-          results.push(...batch.map(() => new Array(768).fill(0)))
+          results.push(...batch.map(() => new Array(OUTPUT_DIMENSIONALITY).fill(0)))
         } else {
           const delay = RETRY_DELAY_MS * attempt * 2
           console.warn(`[Embeddings] Batch attempt ${attempt} failed. Retrying in ${delay}ms...`)
