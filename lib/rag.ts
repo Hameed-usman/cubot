@@ -557,7 +557,7 @@ Answer (${lang === 'urdu' ? 'URDU ONLY' : 'ENGLISH ONLY'}, MUST BE VALID JSON):`
 
       // Cache successful high/medium confidence results
       const isNegativeResponse = /don't have info|don't know|not found|معذرت|پاس معلومات نہیں|تصدیق شدہ معلومات نہیں/i.test(parsedContent)
-      if (confidence !== 'no_data' && parsedContent && !isNegativeResponse) {
+      if (parsedContent && !isNegativeResponse) {
         const cachePayload: CachedRAGResult = {
           content: result.content,
           citations: result.citations,
@@ -763,7 +763,7 @@ Answer (${lang === 'urdu' ? 'URDU ONLY' : 'ENGLISH ONLY'}):`
         // Cache the result ONLY if it's high quality and actually contains info
         const isNegativeResponse = /don't have info|don't know|not found|معذرت|پاس معلومات نہیں|تصدیق شدہ معلومات نہیں/i.test(content)
         
-        if (confidence !== 'no_data' && content && !isNegativeResponse) {
+        if (content && !isNegativeResponse) {
           setCachedResult(message, {
             content,
             citations: citations as Citation[],
@@ -777,16 +777,9 @@ Answer (${lang === 'urdu' ? 'URDU ONLY' : 'ENGLISH ONLY'}):`
         if (request.sessionId) {
           sql`
             INSERT INTO conversations (session_id, user_message, bot_response, persona, language, response_source, is_unanswered)
-            VALUES (${request.sessionId}, ${message}, ${content}, ${intent}, ${lang}, 'ai_fresh', ${confidence === 'no_data'})
+            VALUES (${request.sessionId}, ${message}, ${content}, ${intent}, ${lang}, 'ai_fresh', false)
             RETURNING id
           `.then(async (res) => {
-            // Log unanswered questions
-            if (confidence === 'no_data' && res.length > 0) {
-              await sql`
-                INSERT INTO unanswered_questions (conversation_id, question_text, language, persona, tier_reached)
-                VALUES (${res[0].id}, ${message}, ${lang}, ${intent}, 'tier3')
-              `
-            }
           }).catch(err => console.error('[RAG] Conversation log error:', err))
         }
       } catch (err) {

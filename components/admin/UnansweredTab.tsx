@@ -17,7 +17,7 @@ export default function UnansweredTab() {
     setIsLoading(true)
     const result = await getUnansweredQuestions()
     if (result.success) {
-      setQuestions(result.data)
+      setQuestions(result.data || [])
     }
     setIsLoading(false)
   }

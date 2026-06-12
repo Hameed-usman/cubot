@@ -17,7 +17,7 @@ export default function KnowledgeListTab() {
     setIsLoading(true)
     const result = await getKnowledgeEntries()
     if (result.success) {
-      setEntries(result.data)
+      setEntries(result.data || [])
     }
     setIsLoading(false)
   }
