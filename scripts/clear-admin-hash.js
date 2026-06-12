@@ -10,7 +10,7 @@ async function main() {
   // Verify it's gone
   const check = await sql.query("SELECT key, value FROM admin_config WHERE key = 'admin_password_hash'");
   console.log('Remaining rows:', check.rows);
-  
+
   console.log('DONE - You can now login with ADMIN_PASSWORD from .env.local');
 }
 
