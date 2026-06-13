@@ -15,12 +15,13 @@ jobs:
           node-version: '20'
           cache: 'npm'
       - run: npm ci
+      - name: Create .env.local
+        run: |
+          echo "NEON_DATABASE_URL=${{ secrets.NEON_DATABASE_URL }}" >> .env.local
+          echo "PINECONE_API_KEY=${{ secrets.PINECONE_API_KEY }}" >> .env.local
+          echo "PINECONE_INDEX_NAME=${{ secrets.PINECONE_INDEX_NAME }}" >> .env.local
+          echo "PINECONE_DIMENSION=768" >> .env.local
+          echo "GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}" >> .env.local
+          echo "CRON_SECRET=${{ secrets.CRON_SECRET }}" >> .env.local
       - run: npm run setup-db
       - run: npm run crawl
-        env:
-          NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
-          PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
-          PINECONE_INDEX_NAME: ${{ secrets.PINECONE_INDEX_NAME }}
-          PINECONE_DIMENSION: '768'
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          CRON_SECRET: ${{ secrets.CRON_SECRET }}
