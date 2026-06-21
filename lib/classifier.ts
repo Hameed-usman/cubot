@@ -41,6 +41,9 @@ const CLASSIFICATION_RULES: ClassificationRule[] = [
   // Contact
   { pattern: /contact|location|address|map|phone|email|reach.?us/i, pageType: 'contact', category: 'Contact', department: 'general' },
 
+  // Facilities
+  { pattern: /facility|facilities|hostel|transport|library|sports|cafeteria|lab/i, pageType: 'general', category: 'Facilities', department: 'general' },
+
   // Departments — CS & IT
   { pattern: /\b(cs|cse|it|software.?eng|computer.?science|information.?technology|bscs|bsit|bsse)\b/i, pageType: 'department', category: 'CS & IT', department: 'cs_it' },
 
@@ -58,11 +61,11 @@ const CLASSIFICATION_RULES: ClassificationRule[] = [
 ]
 
 /**
- * Classifies a page using its URL and title.
+ * Classifies a page using its URL, title, and a content snippet.
  * Returns the first matching rule (rules ordered by specificity).
  */
-export function classifyPage(url: string, title: string): Classification {
-  const combined = `${url} ${title}`.toLowerCase()
+export function classifyPage(url: string, title: string, contentSnippet: string = ''): Classification {
+  const combined = `${url} ${title} ${contentSnippet}`.toLowerCase()
 
   // High-priority check for Faculty/Staff (including profile.php and bio pages)
   if (

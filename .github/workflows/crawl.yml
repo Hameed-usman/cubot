@@ -2,7 +2,7 @@ name: Cubot Knowledge Sync
 
 on:
   schedule:
-    - cron: '0 1 * * *'
+    - cron: '0 1 1,15 * *'
   workflow_dispatch:
 
 jobs:

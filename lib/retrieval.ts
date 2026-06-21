@@ -19,7 +19,7 @@ import { RankedChunk, ChunkMetadata, Citation, ConfidenceLevel } from '@/types'
 const TOP_K_VECTOR = 30    // Per query variant (3 variants × 30 = up to 90 candidates before dedup)
 const TOP_K_KEYWORD = 40
 const RRF_K = 60           // RRF constant
-const MIN_VECTOR_SCORE = 0.45 // Filter out low-confidence vectors
+const MIN_VECTOR_SCORE = 0.15 // Filter out low-confidence vectors
 
 // ─── University Synonyms ───────────────────────────────────────────────────────
 
@@ -117,7 +117,7 @@ async function expandQuery(query: string, apiKey: string): Promise<string[]> {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
+        model: 'llama-3.1-8b-instant',
         messages: [{
           role: 'user',
           content: `Generate exactly 2 alternative phrasings of this university search query. Output ONLY the 2 alternatives on separate lines, no numbering, no explanation.
@@ -158,21 +158,31 @@ async function vectorSearch(queries: string[], topK: number = TOP_K_VECTOR): Pro
     // Embed all query variants in one batch call
     const embeddings = await embedBatch(queries)
 
-    for (let qi = 0; qi < queries.length; qi++) {
+    await Promise.all(queries.map(async (query, qi) => {
       const embedding = embeddings[qi]
-      const targetNamespaces = getTargetNamespaces(queries[qi])
+      const targetNamespaces = getTargetNamespaces(query)
 
       // Search primary namespaces, then fall back to global (no namespace filter)
-      for (const ns of targetNamespaces) {
+      const namespacePromises = targetNamespaces.map(async (ns) => {
         console.log(`[Retrieval Debug] Sending query to namespace ${ns} with vector length ${embedding.length}`)
         const response = await index.namespace(ns).query({
           vector: embedding,
           topK: Math.ceil(topK / Math.max(targetNamespaces.length, 1)),
           includeMetadata: true,
         })
+        return response.matches || []
+      })
 
-        for (const match of response.matches || []) {
-          // Apply minimum score threshold to filter noise
+      const globalPromise = index.query({
+        vector: embedding,
+        topK: Math.ceil(topK / 2),
+        includeMetadata: true,
+      }).then(r => r.matches || [])
+
+      const allMatchesArrays = await Promise.all([...namespacePromises, globalPromise])
+
+      for (const matches of allMatchesArrays) {
+        for (const match of matches) {
           if ((match.score || 0) < MIN_VECTOR_SCORE) continue
           if (seen.has(match.id)) continue
           seen.add(match.id)
@@ -184,26 +194,7 @@ async function vectorSearch(queries: string[], topK: number = TOP_K_VECTOR): Pro
           })
         }
       }
-
-      // Also search global index for comprehensive coverage
-      const globalResp = await index.query({
-        vector: embedding,
-        topK: Math.ceil(topK / 2),
-        includeMetadata: true,
-      })
-
-      for (const match of globalResp.matches || []) {
-        if ((match.score || 0) < MIN_VECTOR_SCORE) continue
-        if (seen.has(match.id)) continue
-        seen.add(match.id)
-
-        allResults.push({
-          id: match.id,
-          score: match.score || 0,
-          metadata: (match.metadata || {}) as unknown as ChunkMetadata,
-        })
-      }
-    }
+    }))
   } catch (error) {
     console.error('[Retrieval] Vector search error:', error)
   }
@@ -434,9 +425,9 @@ export async function hybridRetrieve(
   const topScore = merged[0]?.rrfScore || merged[0]?.score || 0
   if (merged.length === 0) {
     confidence = 'no_data'
-  } else if (merged.length >= 5 && topScore > 0.55) {
+  } else if (merged.length >= 5 && topScore > 0.35) {
     confidence = 'high'
-  } else if (merged.length >= 2 && topScore > 0.35) {
+  } else if (merged.length >= 2 && topScore > 0.15) {
     confidence = 'medium'
   } else if (merged.length >= 1) {
     confidence = 'low'

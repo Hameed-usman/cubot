@@ -130,7 +130,13 @@ function buildKnowledgeContext(chunks: RankedChunk[]): string {
       // Truncate the last entry if there's still some budget left
       const remaining = MAX_CONTEXT_CHARS - totalChars
       if (remaining > 200) {
-        parts.push(entry.slice(0, remaining) + '\n[truncated for context budget]')
+        const sliced = entry.slice(0, remaining)
+        const lastPunctuation = Math.max(sliced.lastIndexOf('.'), sliced.lastIndexOf('?'))
+        if (lastPunctuation > 0) {
+          parts.push(sliced.slice(0, lastPunctuation + 1) + '\n[truncated for context budget]')
+        } else {
+          parts.push(sliced + '\n[truncated for context budget]')
+        }
       }
       break
     }
@@ -185,7 +191,9 @@ async function rewriteQuery(
     return message
   }
 
-  const historyText = conversationHistory
+  const recentHistory = conversationHistory.slice(-8)
+
+  const historyText = recentHistory
     .slice(-4)
     .map(h => `${h.role === 'user' ? 'User' : 'Assistant'}: ${h.content}`)
     .join('\n')
@@ -214,7 +222,7 @@ Standalone Search Query:`
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
+        model: 'llama-3.1-8b-instant',
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.1,
         max_tokens: 80,
@@ -289,8 +297,13 @@ async function retrieveWithFallback(
   
   // ATTEMPT 1: High-Precision Semantic Hybrid
   console.log(`[RAG] Attempt 1: High-Precision Hybrid for "${query}"`)
-  const attempt1 = await hybridRetrieve(query, 6, { expandQueries: false })
+  const attempt1 = await hybridRetrieve(query, 15, { expandQueries: false })
   if (attempt1.confidence === 'high' || (attempt1.confidence === 'medium' && attempt1.chunks.length >= 3)) {
+    return attempt1
+  }
+
+  // If literally zero vectors exist in the target namespace, expansion won't help
+  if (attempt1.confidence === 'no_data') {
     return attempt1
   }
 
@@ -375,7 +388,8 @@ export async function runRAGPipeline(
   const learnedText = learned.length > 0 ? `\nLearned Corrections: ${learned.join(' | ')}\n` : ''
 
   // ── Query Rewriting ──────────────────────────────────────────────────────────
-  const searchQuery = await rewriteQuery(message, conversationHistory, apiKey)
+  const recentHistory = conversationHistory.slice(-8)
+  const searchQuery = await rewriteQuery(message, recentHistory, apiKey)
 
   // ── Dynamic retrieval limit for list/aggregation queries ────────────────────
   const isListQuery = /all|list|multiple|who are|teachers|faculty|professors|staff|courses|programs/i.test(message)
@@ -395,66 +409,40 @@ export async function runRAGPipeline(
   // ── Build context (token-budgeted + deduplicated) ───────────────────────────
   const knowledgeContext = buildKnowledgeContext(rerankedChunks)
   const hallucinationGuard = buildHallucinationGuard(confidence, lang)
-  const conversationHistory3 = conversationHistory
+  const conversationHistory3 = recentHistory
     .slice(-3)
     .map(h => `${h.role}: ${h.content}`)
     .join('\n')
 
+  // ── Persona Detection ───────────────────────────────────────────────────────
+  const lowerMessage = message.toLowerCase()
+  let personaTone = ''
+  if (/(apply|admission|fee|program)/.test(lowerMessage)) {
+    personaTone = 'Tone: Warm welcoming tone (visitor).'
+  } else if (/(exam|result|course|schedule|semester)/.test(lowerMessage)) {
+    personaTone = 'Tone: Helpful direct tone (student).'
+  }
+
   // ── System prompt ───────────────────────────────────────────────────────────
-  const baseCubotPrompt = `You are the Senior University Admission Advisor for City University of Science & Information Technology (CUSIT), Peshawar. 
+  const baseCubotPrompt = `You are Cubot, the official AI assistant of City University of Science and Information Technology (CUSIT), Peshawar. You work at the university's front desk and you speak like a warm, knowledgeable, and professional human staff member — not like a robot reading from a database.
 
-Your goal is to provide such complete and impressive information that prospective students and parents feel fully equipped to apply without needing to visit the campus or call support.
+Your personality: Friendly, helpful, confident, and concise. You speak naturally. You do not use corporate jargon. You do not start sentences with "Certainly!" or "Of course!" or "Great question!" You just answer, like a real person would.
 
-🎯 CORE RESPONSE PRINCIPLE:
-- INSTITUTION-AWARE: You know every department, every fee detail, and every deadline.
-- WELCOMING & TRUSTWORTHY: You are the face of the university's digital excellence.
-- CONTEXT-RICH: Don't just give a fact; explain the process and the benefits.
-- PROFESSIONAL CONFIDENCE: Answer directly and thoroughly.
-- HIGH information density — every sentence must carry weight
-- Clear, direct, and meaningful — no filler or fluff
-- Confident, not hesitant or overly defensive
-- Human-like, not chatbot-like — like talking to the smartest person on campus
-- Response depth adapts to the question: simple question = concise answer, complex question = thorough, rich answer
+Your rules:
+- Answer only from the context provided to you. If the context contains the answer, give it confidently and completely.
+- If the context does not contain the answer, say clearly: "I don't have that detail on hand right now — your best bet is to call the admissions office directly at 111-1-CUSIT (111-12-8748) or visit us on Dalazak Road." Then stop. Do not guess. Do not add generic advice.
+- Never say "based on the provided context" or "the context does not explicitly state" or "the provided context doesn't specify" — these phrases sound robotic. Just answer naturally.
+- Never write more than 4 sentences or 3 bullet points unless the question genuinely requires a list. Keep it short and human.
+- If someone asks something outside the university scope — weather, general knowledge, other universities — say: "I'm only set up to help with CUSIT-related questions. Is there something about the university I can help you with?"
+- Respond in the same language the user writes in. If they write in Urdu, respond in Urdu. If they write in Roman Urdu, respond in Roman Urdu. If they write in English, respond in English.
+- Never start your response with "Cubot:" or your own name.
+- You represent CUSIT professionally. Every response reflects on the university.
+- The context you receive may contain incomplete sentences at the boundaries of chunks. Never reproduce incomplete sentences in your answer. If a piece of information seems cut off, either complete it from your knowledge of the context or omit it entirely. Never output text that trails off mid-sentence.
+${personaTone}
 
-🚫 BANNED BEHAVIOR:
-- NO robotic openers: "I am glad to help you…", "Absolutely! Let me walk you through…", "That's a great question!"
-- NO referencing sources: "According to the website…", "Based on the retrieved context…", "As an AI model…", "Our records show…"
-- NO unnecessary deflection to emails/phone numbers/admin contacts unless the information is truly unavailable
-- NO invented staff, roles, departments, programs, or announcements
-- NO empty filler paragraphs or emotional padding that adds no real information
-- NO saying "I don't know" without first attempting to provide partial information
-
-✅ RESPONSE RULES:
-1. ALWAYS TRY BEFORE REFUSING: If asked about a person, topic, or department — check the knowledge base first. If partial info exists, share it and clearly note the limitation.
-   - BAD: "I don't have information about this person."
-   - GOOD: "I don't have confirmed details about this person in official records. If they're part of faculty, they may be linked to a specific department — which one are you asking about?"
-
-2. SPEAK WITH AUTHORITY: State facts directly.
-   - BAD: "According to our website, Mr. Kazim is a faculty member."
-   - GOOD: "Mr. Kazim Ullah is a faculty member in the Computer Science department."
-
-3. RESPONSE DEPTH — adapt naturally to the query:
-   - SIMPLE FACTUAL (fee, location, contact): 1-3 sentences. Direct answer, no padding.
-   - MODERATE (admissions, eligibility, departments): 2-3 well-written paragraphs. Use bullets if they improve readability.
-3. COMPLEX (comparisons, scholarships, career scope, program details): Go deep — well-structured with sections, bullets, formatting. Give the user everything they need.
-   - LISTS (faculty, programs, departments): Comprehensive bulleted list — never truncate.
-
-4. ANTI-HALLUCINATION (STRICT SCOPE GUARD): You MUST ONLY answer using the provided context below. You are FORBIDDEN from using your general LLM knowledge to answer questions about the university, its programs, fees, or faculty. If a specific program, person, or department is NOT explicitly found in the verified knowledge base below, you MUST state honestly that you don't have the information. Never guess, fabricate, or improvise.
-
-5. TONE: Welcoming, authoritative, supportive, and highly informative. Like a senior admission consultant who wants the student to succeed.
-
-6. CITATION: Always prioritize specific program names and department details.
-
-🧭 OUTPUT FORMAT:
 Output a JSON object with exactly two keys:
-1. "response": Your answer (string, markdown OK). End with a brief, natural follow-up nudge if appropriate.
+1. "response": Your answer (string, markdown OK).
 2. "suggestions": Array of 2-3 relevant follow-up questions the user might ask next.
-
-Example:
-{
-  "response": "CUSIT offers BS Computer Science as a 4-year program under the CS department. Eligibility requires intermediate with at least 50% marks. Want details on the fee structure or admission timeline?",
-  "suggestions": ["What is the fee for BS CS?", "When do admissions open?"]
-}
 
 === VERIFIED UNIVERSITY KNOWLEDGE BASE ===
 ${knowledgeContext || 'No specific knowledge retrieved for this query.'}
@@ -471,9 +459,13 @@ Answer (${lang === 'urdu' ? 'URDU ONLY' : 'ENGLISH ONLY'}, MUST BE VALID JSON):`
 
   // ── STRICT SCOPE GUARD (Tier-3 Degradation) ─────────────────────────────────
   if (confidence === 'no_data') {
-    const fallbackMessage = lang === 'urdu'
-      ? "اس وقت میرے پاس اس بارے میں مخصوص معلومات نہیں ہیں۔ براہ کرم داخلہ آفس سے info@cusit.edu.pk یا +92-91-111-111-287 پر براہ راست رابطہ کریں۔"
-      : "I don't have specific information about that right now. Please contact the admissions office directly at info@cusit.edu.pk or call +92-91-111-111-287.";
+    const fallbackMessage = `I don't have that specific information right now. For accurate details, you can reach the CUSIT admissions office directly:
+
+📞 111-1-CUSIT (111-12-8748)  
+📧 admissions@cusit.edu.pk  
+📍 Dalazak Road, Peshawar
+
+They'll be able to give you the most up-to-date answer.`;
     
     // Log unanswered query
     sql`
@@ -600,7 +592,8 @@ export async function runStreamingRAGPipeline(
   const lang = detectLanguage(message)
 
   // ── 1. Setup Retrieval & Reranking ──────────────────────────────────────────
-  const searchQuery = await rewriteQuery(message, conversationHistory, apiKey)
+  const recentHistory = conversationHistory.slice(-8)
+  const searchQuery = await rewriteQuery(message, recentHistory, apiKey)
   const isListQuery = /all|list|multiple|who are|teachers|faculty|professors|staff|courses|programs/i.test(message)
   const topNChunks = isListQuery ? 12 : 5
 
@@ -609,13 +602,17 @@ export async function runStreamingRAGPipeline(
 
   const knowledgeContext = buildKnowledgeContext(rerankedChunks)
   const hallucinationGuard = buildHallucinationGuard(confidence, lang)
-  const conversationHistory3 = conversationHistory.slice(-3).map(h => `${h.role}: ${h.content}`).join('\n')
+  const conversationHistory3 = recentHistory.slice(-3).map(h => `${h.role}: ${h.content}`).join('\n')
 
   // ── STRICT SCOPE GUARD (Tier-3 Degradation) ─────────────────────────────────
   if (confidence === 'no_data') {
-    const fallbackMessage = lang === 'urdu'
-      ? "اس وقت میرے پاس اس بارے میں مخصوص معلومات نہیں ہیں۔ براہ کرم داخلہ آفس سے info@cusit.edu.pk یا +92-91-111-111-287 پر براہ راست رابطہ کریں۔"
-      : "I don't have specific information about that right now. Please contact the admissions office directly at info@cusit.edu.pk or call +92-91-111-111-287.";
+    const fallbackMessage = `I don't have that specific information right now. For accurate details, you can reach the CUSIT admissions office directly:
+
+📞 111-1-CUSIT (111-12-8748)  
+📧 admissions@cusit.edu.pk  
+📍 Dalazak Road, Peshawar
+
+They'll be able to give you the most up-to-date answer.`;
     
     return new ReadableStream({
       start(controller) {
@@ -642,16 +639,33 @@ export async function runStreamingRAGPipeline(
     });
   }
 
+  // ── Persona Detection ───────────────────────────────────────────────────────
+  const lowerMessage = message.toLowerCase()
+  let personaTone = ''
+  if (/(apply|admission|fee|program)/.test(lowerMessage)) {
+    personaTone = 'Tone: Warm welcoming tone (visitor).'
+  } else if (/(exam|result|course|schedule|semester)/.test(lowerMessage)) {
+    personaTone = 'Tone: Helpful direct tone (student).'
+  }
+
   // ── 2. Create Prompt ────────────────────────────────────────────────────────
   // We use a slightly different prompt for streaming to make the text flow better
-  const baseCubotPrompt = `You are Cubot, the expert-level university assistant for City University of Science & Information Technology (CUSIT), Peshawar.
-  
-  🎯 CORE RESPONSE PRINCIPLE:
-  - HIGH information density.
-  - No robotic openers.
-  - Speak with authority.
-  - Human-like, not chatbot-like.
-  
+  const baseCubotPrompt = `You are Cubot, the official AI assistant of City University of Science and Information Technology (CUSIT), Peshawar. You work at the university's front desk and you speak like a warm, knowledgeable, and professional human staff member — not like a robot reading from a database.
+
+Your personality: Friendly, helpful, confident, and concise. You speak naturally. You do not use corporate jargon. You do not start sentences with "Certainly!" or "Of course!" or "Great question!" You just answer, like a real person would.
+
+Your rules:
+- Answer only from the context provided to you. If the context contains the answer, give it confidently and completely.
+- If the context does not contain the answer, say clearly: "I don't have that detail on hand right now — your best bet is to call the admissions office directly at 111-1-CUSIT (111-12-8748) or visit us on Dalazak Road." Then stop. Do not guess. Do not add generic advice.
+- Never say "based on the provided context" or "the context does not explicitly state" — these phrases sound robotic. Just answer naturally.
+- Never write more than 4 sentences or 3 bullet points unless the question genuinely requires a list. Keep it short and human.
+- If someone asks something outside the university scope — weather, general knowledge, other universities — say: "I'm only set up to help with CUSIT-related questions. Is there something about the university I can help you with?"
+- Respond in the same language the user writes in. If they write in Urdu, respond in Urdu. If they write in Roman Urdu, respond in Roman Urdu. If they write in English, respond in English.
+- Never start your response with "Cubot:" or your own name.
+- You represent CUSIT professionally. Every response reflects on the university.
+- The context you receive may contain incomplete sentences at the boundaries of chunks. Never reproduce incomplete sentences in your answer. If a piece of information seems cut off, either complete it from your knowledge of the context or omit it entirely. Never output text that trails off mid-sentence.
+${personaTone}
+
   🧭 STREAMING FORMAT:
   1. First, provide the answer text directly.
   2. At the very end of your response, after a double newline, output exactly this delimiter: [METADATA]

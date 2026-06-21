@@ -210,7 +210,7 @@ async function llmRerank(
     })
     .join('\n\n')
 
-  const prompt = `You are a university chatbot relevance judge. Score each knowledge chunk for how useful it is for answering the user's query. Return ONLY a JSON array of objects with {"index": number, "score": number} where score is 0-10 (10 = perfectly relevant, 0 = irrelevant).
+  const prompt = `You are a university chatbot relevance judge. Score each knowledge chunk for how useful it is for answering the user's query. Return ONLY a JSON object with a "scores" array containing objects with {"index": number, "score": number} where score is 0-10 (10 = perfectly relevant, 0 = irrelevant).
 
 User Query: "${query}"
 
@@ -222,7 +222,7 @@ Scoring criteria:
 - Does it mention specific facts (names, dates, fees, program details) relevant to the query?
 - Is it from an authoritative page type for this query?
 
-Return JSON array only:`
+Return JSON object only:`
 
   try {
     const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
@@ -232,7 +232,7 @@ Return JSON array only:`
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
+        model: 'llama-3.1-8b-instant',
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.0,
         max_tokens: 200,

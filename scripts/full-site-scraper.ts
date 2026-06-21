@@ -14,7 +14,7 @@ import { processDocument } from './document-processor'
 
 // ─── Configuration ─────────────────────────────────────────────────────────────
 
-const BASE_URL = 'https://www.cusit.edu.pk'
+const BASE_URL = 'https://cusit.edu.pk'
 const ALLOWED_DOMAINS = ['cusit.edu.pk', 'www.cusit.edu.pk']
 const MAX_PAGES = parseInt(process.env.CRAWLER_MAX_PAGES || '2500')
 const CONCURRENCY = parseInt(process.env.CRAWLER_CONCURRENCY || '4')
@@ -40,11 +40,11 @@ const DOCUMENT_EXTENSIONS = ['.pdf', '.docx', '.xlsx', '.doc', '.pptx', '.ppt']
  */
 const SEED_URLS: Array<{ url: string; priority: number }> = [
   // Priority 1 — Core institutional pages
-  { url: 'https://www.cusit.edu.pk', priority: 1 },
-  { url: 'https://www.cusit.edu.pk/admissions.php', priority: 1 },
-  { url: 'https://www.cusit.edu.pk/fee-structure.php', priority: 1 },
-  { url: 'https://www.cusit.edu.pk/scholarships.php', priority: 1 },
-  { url: 'https://www.cusit.edu.pk/contact.php', priority: 1 },
+  { url: 'https://cusit.edu.pk', priority: 1 },
+  { url: 'https://cusit.edu.pk/admissions.php', priority: 1 },
+  { url: 'https://cusit.edu.pk/fee-structure.php', priority: 1 },
+  { url: 'https://cusit.edu.pk/scholarships.php', priority: 1 },
+  { url: 'https://cusit.edu.pk/contact.php', priority: 1 },
 
   // Priority 2 — Faculty lists (each leads to profile pages)
   { url: 'https://cusit.edu.pk/cusitnew/cs/faculty.php', priority: 2 },
@@ -520,7 +520,7 @@ async function processPage(url: string): Promise<PageResult> {
     }
 
     const contentHash = crypto.createHash('md5').update(content).digest('hex')
-    const classification = classifyPage(url, title)
+    const classification = classifyPage(url, title, content.slice(0, 1000))
     const breadcrumb = buildBreadcrumb(url)
     const parentPageId = uuidv4()
 
