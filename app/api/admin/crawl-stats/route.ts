@@ -19,91 +19,74 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     if (authRes) return authRes
 
 
-    // Run all queries in parallel for speed
-    const [
-      lastRunRows,
-      totalEntriesRows,
-      byCategoryRows,
-      bySourceTypeRows,
-      byPageTypeRows,
-      recentUpdatesRows,
-      recentFailuresRows,
-    ] = await Promise.all([
-      // Last completed crawl run
-      sql`
-        SELECT
-          run_id        AS "runId",
-          pages_crawled AS "pagesCrawled",
-          pages_failed  AS "pagesFailed",
-          pages_updated AS "pagesUpdated",
-          pages_skipped AS "pagesSkipped",
-          documents_processed AS "documentsProcessed",
-          chunks_created      AS "chunksCreated",
-          embeddings_created  AS "embeddingsCreated",
-          duration_seconds    AS "durationSeconds",
-          status,
-          started_at   AS "startedAt",
-          completed_at AS "completedAt"
-        FROM crawl_stats
-        ORDER BY started_at DESC
-        LIMIT 1
-      `,
+    // Run queries sequentially to avoid exhausting Neon connection pool limits
+    const lastRunRows = await sql`
+      SELECT
+        run_id        AS "runId",
+        pages_crawled AS "pagesCrawled",
+        pages_failed  AS "pagesFailed",
+        pages_updated AS "pagesUpdated",
+        pages_skipped AS "pagesSkipped",
+        documents_processed AS "documentsProcessed",
+        chunks_created      AS "chunksCreated",
+        embeddings_created  AS "embeddingsCreated",
+        duration_seconds    AS "durationSeconds",
+        status,
+        started_at   AS "startedAt",
+        completed_at AS "completedAt"
+      FROM crawl_stats
+      ORDER BY started_at DESC
+      LIMIT 1
+    `
 
-      // Total knowledge entries
-      sql`SELECT COUNT(*) AS count FROM knowledge_entries`,
+    const totalEntriesRows = await sql`SELECT COUNT(*) AS count FROM knowledge_entries`
 
-      // Breakdown by category
-      sql`
-        SELECT category, COUNT(*) AS count
-        FROM knowledge_entries
-        GROUP BY category
-        ORDER BY count DESC
-      `,
+    const byCategoryRows = await sql`
+      SELECT category, COUNT(*) AS count
+      FROM knowledge_entries
+      GROUP BY category
+      ORDER BY count DESC
+    `
 
-      // Breakdown by source type
-      sql`
-        SELECT source_type AS "sourceType", COUNT(*) AS count
-        FROM knowledge_entries
-        GROUP BY source_type
-        ORDER BY count DESC
-      `,
+    const bySourceTypeRows = await sql`
+      SELECT source_type AS "sourceType", COUNT(*) AS count
+      FROM knowledge_entries
+      GROUP BY source_type
+      ORDER BY count DESC
+    `
 
-      // Breakdown by page type
-      sql`
-        SELECT page_type AS "pageType", COUNT(*) AS count
-        FROM knowledge_entries
-        WHERE page_type IS NOT NULL
-        GROUP BY page_type
-        ORDER BY count DESC
-      `,
+    const byPageTypeRows = await sql`
+      SELECT page_type AS "pageType", COUNT(*) AS count
+      FROM knowledge_entries
+      WHERE page_type IS NOT NULL
+      GROUP BY page_type
+      ORDER BY count DESC
+    `
 
-      // Recent updates (last 10)
-      sql`
-        SELECT DISTINCT ON (source_url)
-          title,
-          source_url   AS "sourceUrl",
-          updated_at   AS "updatedAt",
-          page_type    AS "pageType"
-        FROM knowledge_entries
-        WHERE source_url IS NOT NULL AND source_url != ''
-        ORDER BY source_url, updated_at DESC
-        LIMIT 10
-      `,
+    const recentUpdatesRows = await sql`
+      SELECT DISTINCT ON (source_url)
+        title,
+        source_url   AS "sourceUrl",
+        updated_at   AS "updatedAt",
+        page_type    AS "pageType"
+      FROM knowledge_entries
+      WHERE source_url IS NOT NULL AND source_url != ''
+      ORDER BY source_url, updated_at DESC
+      LIMIT 10
+    `
 
-      // Recent failures from last run
-      sql`
-        SELECT
-          f.url,
-          f.error,
-          f.attempted_at AS "attemptedAt"
-        FROM crawl_failed_pages f
-        INNER JOIN (
-          SELECT run_id FROM crawl_stats ORDER BY started_at DESC LIMIT 1
-        ) latest ON f.run_id = latest.run_id
-        ORDER BY f.attempted_at DESC
-        LIMIT 20
-      `.catch(() => []), // Non-fatal if table is empty
-    ])
+    const recentFailuresRows = await sql`
+      SELECT
+        f.url,
+        f.error,
+        f.attempted_at AS "attemptedAt"
+      FROM crawl_failed_pages f
+      INNER JOIN (
+        SELECT run_id FROM crawl_stats ORDER BY started_at DESC LIMIT 1
+      ) latest ON f.run_id = latest.run_id
+      ORDER BY f.attempted_at DESC
+      LIMIT 20
+    `.catch(() => []) // Non-fatal if table is empty
 
     const dashboard: CrawlDashboardData = {
       lastRun: lastRunRows.length > 0 ? {

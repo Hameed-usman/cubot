@@ -102,6 +102,19 @@ export default function SyncIntelligenceTab() {
     setQuickSyncing(false)
   }
 
+  async function triggerStopSync() {
+    setSyncing(true) // Disable buttons temporarily
+    try {
+      const res = await fetch('/api/admin/stop-crawl', { method: 'POST' })
+      const json = await res.json()
+      showMsg(json.message || (res.ok ? 'Stop signal sent!' : 'Failed to stop.'), res.ok && json.success)
+      if (res.ok) setTimeout(load, 3000)
+    } catch {
+      showMsg('Could not connect to stop API.', false)
+    }
+    setSyncing(false)
+  }
+
   useEffect(() => { load() }, [])
 
   const lr = data?.lastRun
@@ -183,27 +196,56 @@ export default function SyncIntelligenceTab() {
               Run this when major content changes happen (new semester, fee revision, etc.)
             </p>
           </div>
-          <div className="text-xs text-white/30 font-sans">
-            Last run: <span className="text-white/60">{timeAgo(lr?.completedAt || '')}</span>
-            {lr && (
-              <span className={`ml-3 font-semibold ${statusColor}`}>
-                {lr.status === 'completed' ? '✓ Success' : lr.status === 'failed' ? '✗ Failed' : '⟳ Running'}
+          <div className="flex flex-col gap-2 p-3.5 rounded-xl bg-black/20 border border-white/5 text-xs font-sans">
+            <div className="flex justify-between items-center">
+              <span className="text-white/40">Status:</span>
+              <span className={`font-semibold ${statusColor}`}>
+                {lr?.status === 'completed' ? '✓ Completed' : lr?.status === 'failed' ? '✗ Failed' : lr?.status ? '⟳ Running' : 'Ready'}
               </span>
-            )}
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-white/40">Pages Processed:</span>
+              <span className="text-white/80 font-mono">
+                {lr ? lr.pagesCrawled : 0}
+              </span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-white/40">Last Crawl:</span>
+              <span className="text-white/80">
+                {lr?.startedAt ? new Date(lr.startedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : 'Never'}
+              </span>
+            </div>
           </div>
-          <button
-            onClick={triggerFullSync}
-            disabled={syncing}
-            className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl text-sm font-bold font-display transition-all"
-            style={{
-              background: syncing ? 'rgba(201,162,39,0.2)' : '#c9a227',
-              color: syncing ? '#c9a227' : '#080d1a',
-              opacity: syncing ? 0.7 : 1,
-            }}>
-            {syncing
-              ? <><Loader2 className="w-4 h-4 animate-spin" /> Starting Sync…</>
-              : <><Zap className="w-4 h-4" /> Sync Entire Website</>}
-          </button>
+          {lr?.status && lr.status !== 'completed' && lr.status !== 'failed' ? (
+            <button
+              onClick={triggerStopSync}
+              disabled={syncing}
+              className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl text-sm font-bold font-display transition-all"
+              style={{
+                background: syncing ? 'rgba(239,68,68,0.2)' : 'rgba(239,68,68,0.15)',
+                border: '1px solid rgba(239,68,68,0.3)',
+                color: '#f87171',
+                opacity: syncing ? 0.7 : 1,
+              }}>
+              {syncing
+                ? <><Loader2 className="w-4 h-4 animate-spin" /> Stopping…</>
+                : <><AlertTriangle className="w-4 h-4" /> Stop Syncing</>}
+            </button>
+          ) : (
+            <button
+              onClick={triggerFullSync}
+              disabled={syncing}
+              className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl text-sm font-bold font-display transition-all"
+              style={{
+                background: syncing ? 'rgba(201,162,39,0.2)' : '#c9a227',
+                color: syncing ? '#c9a227' : '#080d1a',
+                opacity: syncing ? 0.7 : 1,
+              }}>
+              {syncing
+                ? <><Loader2 className="w-4 h-4 animate-spin" /> Starting Sync…</>
+                : <><Zap className="w-4 h-4" /> Sync Entire Website</>}
+            </button>
+          )}
         </div>
 
         {/* Quick Single-URL Sync */}

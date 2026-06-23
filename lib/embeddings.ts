@@ -10,6 +10,14 @@ import { GoogleGenerativeAI } from '@google/generative-ai'
  * We request 768 dimensions via `outputDimensionality` so vectors match the
  * existing Pinecone index (768-dim) without requiring a rebuild.
  *
+ * CRITICAL TASK TYPE DISTINCTION:
+ * - `RETRIEVAL_DOCUMENT` → used when embedding content for storage (ingestion time)
+ * - `RETRIEVAL_QUERY`    → MUST be used when embedding search queries at runtime
+ *
+ * Using RETRIEVAL_DOCUMENT for queries is a common mistake that causes cosine similarity
+ * to fail — queries point in the wrong direction in embedding space, yielding near-zero
+ * similarity against all stored document vectors. Always use the correct task type.
+ *
  * Falls back gracefully if GEMINI_API_KEY is not set (for local dev without keys).
  */
 
@@ -81,6 +89,104 @@ export async function embedText(text: string): Promise<number[]> {
   }
 
   return new Array(OUTPUT_DIMENSIONALITY).fill(0)
+}
+
+/**
+ * Embed a SEARCH QUERY using gemini-embedding-001 with RETRIEVAL_QUERY task type.
+ *
+ * This is the correct function to call at query-time (when the user asks a question).
+ * Using RETRIEVAL_QUERY instead of RETRIEVAL_DOCUMENT is essential — Gemini produces
+ * different vector representations for each task type that are optimized for
+ * asymmetric search (short query → long document matching).
+ *
+ * NOTE: embedText() uses RETRIEVAL_DOCUMENT and is for ingestion only.
+ *       Always use embedQuery() when searching Pinecone at runtime.
+ */
+export async function embedQuery(text: string): Promise<number[]> {
+  const client = getEmbeddingClient()
+
+  if (!client) {
+    console.warn('[Embeddings] embedQuery: Returning zero vector — configure GEMINI_API_KEY.')
+    return new Array(OUTPUT_DIMENSIONALITY).fill(0)
+  }
+
+  const model = client.getGenerativeModel({ model: EMBEDDING_MODEL })
+  const cleanText = text.trim().slice(0, 10000)
+
+  for (let attempt = 1; attempt <= RETRY_ATTEMPTS; attempt++) {
+    try {
+      const result = await model.embedContent({
+        content: { role: 'user', parts: [{ text: cleanText }] },
+        taskType: 'RETRIEVAL_QUERY',  // ← correct task type for search queries
+        outputDimensionality: OUTPUT_DIMENSIONALITY,
+      } as any)
+      return result.embedding.values
+    } catch (error: any) {
+      const isRateLimit = error?.status === 429 || error?.message?.includes('429')
+      const isLastAttempt = attempt === RETRY_ATTEMPTS
+
+      if (isLastAttempt) {
+        console.error(`[Embeddings] embedQuery failed after ${RETRY_ATTEMPTS} attempts:`, error?.message)
+        throw error
+      }
+
+      const delay = isRateLimit ? RETRY_DELAY_MS * attempt * 2 : RETRY_DELAY_MS * attempt
+      console.warn(`[Embeddings] embedQuery attempt ${attempt} failed. Retrying in ${delay}ms...`)
+      await sleep(delay)
+    }
+  }
+
+  return new Array(OUTPUT_DIMENSIONALITY).fill(0)
+}
+
+/**
+ * Embed multiple SEARCH QUERIES in batch using RETRIEVAL_QUERY task type.
+ * Use this for multi-query retrieval expansion at search time.
+ */
+export async function embedQueryBatch(texts: string[]): Promise<number[][]> {
+  const client = getEmbeddingClient()
+
+  if (!client) {
+    console.warn('[Embeddings] embedQueryBatch: Returning zero vectors — configure GEMINI_API_KEY.')
+    return texts.map(() => new Array(OUTPUT_DIMENSIONALITY).fill(0))
+  }
+
+  const model = client.getGenerativeModel({ model: EMBEDDING_MODEL })
+  const results: number[][] = []
+
+  for (let i = 0; i < texts.length; i += BATCH_SIZE) {
+    const batch = texts.slice(i, i + BATCH_SIZE)
+
+    for (let attempt = 1; attempt <= RETRY_ATTEMPTS; attempt++) {
+      try {
+        const batchResults = await Promise.all(
+          batch.map(async (text) => {
+            const clean = text.trim().slice(0, 10000)
+            const res = await model.embedContent({
+              content: { role: 'user', parts: [{ text: clean }] },
+              taskType: 'RETRIEVAL_QUERY',  // ← correct task type for search queries
+              outputDimensionality: OUTPUT_DIMENSIONALITY,
+            } as any)
+            return res.embedding.values
+          })
+        )
+        results.push(...batchResults)
+        if (i + BATCH_SIZE < texts.length) await sleep(200)
+        break
+      } catch (error: any) {
+        if (attempt === RETRY_ATTEMPTS) {
+          console.error(`[Embeddings] embedQueryBatch batch ${i / BATCH_SIZE + 1} failed:`, error?.message)
+          results.push(...batch.map(() => new Array(OUTPUT_DIMENSIONALITY).fill(0)))
+        } else {
+          const delay = RETRY_DELAY_MS * attempt * 2
+          console.warn(`[Embeddings] embedQueryBatch attempt ${attempt} failed. Retrying in ${delay}ms...`)
+          await sleep(delay)
+        }
+      }
+    }
+  }
+
+  return results
 }
 
 /**

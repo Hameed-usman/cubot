@@ -602,6 +602,14 @@ async function runCrawler() {
       continue
     }
 
+    // Check for manual stop signal
+    const stopFlagResult = await sql`SELECT value FROM admin_config WHERE key = 'stop_crawl' LIMIT 1`.catch(()=>[])
+    if (stopFlagResult.length > 0 && stopFlagResult[0].value === 'true') {
+      console.log('🛑 Stop signal received! Aborting crawl safely...')
+      await sql`UPDATE admin_config SET value = 'false' WHERE key = 'stop_crawl'`.catch(()=>{})
+      break
+    }
+
     // Get next URL
     const nextItems = await sql`
       UPDATE crawl_queue

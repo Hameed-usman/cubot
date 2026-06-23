@@ -1,5 +1,5 @@
 import sql from './db'
-import { embedText, embedBatch } from './embeddings'
+import { embedBatch, embedQueryBatch } from './embeddings'
 import { pineconeIndex } from './pinecone'
 import { categoryToNamespace } from './embed-and-store'
 import { RankedChunk, ChunkMetadata, Citation, ConfidenceLevel } from '@/types'
@@ -66,6 +66,9 @@ function getTargetNamespaces(query: string): string[] {
 
   if (/facult|staff|professor|lecturer|instructor|teacher|bio|cv|dr\.|prof\.|hod|dean|who is|tell me about|profile|details of/i.test(q))
     namespaces.push('faculty')
+  // 'who is' queries could also refer to alumni — check both
+  if (/who is|tell me about/i.test(q))
+    namespaces.push('alumni')
   if (/admiss|apply|enroll|eligib|entry test|last date|intake|form/i.test(q))
     namespaces.push('admissions')
   if (/scholarship|financial.?aid|merit|bursary|stipend|waiver/i.test(q))
@@ -88,7 +91,7 @@ function getTargetNamespaces(query: string): string[] {
   if (/nurs/i.test(q)) namespaces.push('dept-nursing')
   if (/program|degree|course|curriculum|syllabus|semester|credit/i.test(q))
     namespaces.push('academic')
-  if (/alumni|graduate|former student/i.test(q))
+  if (/alumni|graduate|former student|gold.?medal|medal.?list|medalist|topper|batch.?20|20\d\d.?batch|convocation|award.?winner|best.?student|distinction|position.?holder|first.?position|second.?position|third.?position/i.test(q))
     namespaces.push('alumni')
   if (/\b(dental|bds|dentistry|oral)\b/i.test(q))
     namespaces.push('admissions', 'academic')
@@ -155,24 +158,26 @@ async function vectorSearch(queries: string[], topK: number = TOP_K_VECTOR): Pro
   const seen = new Set<string>()
 
   try {
-    // Embed all query variants in one batch call
-    const embeddings = await embedBatch(queries)
+    // Embed all query variants using RETRIEVAL_QUERY task type (critical for correct similarity)
+    const embeddings = await embedQueryBatch(queries)
 
     await Promise.all(queries.map(async (query, qi) => {
       const embedding = embeddings[qi]
       const targetNamespaces = getTargetNamespaces(query)
 
-      // Search primary namespaces, then fall back to global (no namespace filter)
+      // Each namespace gets the FULL topK budget — deduplication handles overlap.
+      // Previously dividing topK by namespace count caused severe recall loss.
       const namespacePromises = targetNamespaces.map(async (ns) => {
         console.log(`[Retrieval Debug] Sending query to namespace ${ns} with vector length ${embedding.length}`)
         const response = await index.namespace(ns).query({
           vector: embedding,
-          topK: Math.ceil(topK / Math.max(targetNamespaces.length, 1)),
+          topK,
           includeMetadata: true,
         })
         return response.matches || []
       })
 
+      // Also search without namespace filter for a global catch-all
       const globalPromise = index.query({
         vector: embedding,
         topK: Math.ceil(topK / 2),
@@ -421,13 +426,20 @@ export async function hybridRetrieve(
   }
 
   // ── Confidence scoring ────────────────────────────────────────────────────
+  // RRF scores are bounded by 1/(k+rank). With k=60, max score ≈ 1/61 ≈ 0.0164.
+  // Previous thresholds (>0.35, >0.15) were mathematically impossible to reach,
+  // causing every query to be permanently stuck at 'low' confidence.
+  // Thresholds below are calibrated to real RRF score distributions:
+  //   high   → topScore > 0.012 (rank ≤ 22 in the fused list, meaning strong vector+keyword match)
+  //   medium → topScore > 0.005 (rank ≤ 139, any meaningful match found)
+  //   low    → any results exist
   let confidence: ConfidenceLevel = 'no_data'
   const topScore = merged[0]?.rrfScore || merged[0]?.score || 0
   if (merged.length === 0) {
     confidence = 'no_data'
-  } else if (merged.length >= 5 && topScore > 0.35) {
+  } else if (merged.length >= 5 && topScore > 0.012) {
     confidence = 'high'
-  } else if (merged.length >= 2 && topScore > 0.15) {
+  } else if (merged.length >= 2 && topScore > 0.005) {
     confidence = 'medium'
   } else if (merged.length >= 1) {
     confidence = 'low'

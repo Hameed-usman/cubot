@@ -302,25 +302,31 @@ async function retrieveWithFallback(
     return attempt1
   }
 
-  // If literally zero vectors exist in the target namespace, expansion won't help
-  if (attempt1.confidence === 'no_data') {
-    return attempt1
-  }
-
   // ATTEMPT 2: Synonym Expansion + Multi-Query variant
+  // NOTE: We no longer exit early on no_data — keyword/BM25 search may still find results
+  // even when vector search returns nothing (e.g., due to namespace mismatch).
   console.log('[RAG] Attempt 1 low confidence. Attempting Stage 2: Synonym Expansion.')
   const expandedQuery = expandSynonyms(query)
   const attempt2 = await hybridRetrieve(expandedQuery, 10, { expandQueries: true })
   if (attempt2.confidence !== 'no_data' && attempt2.chunks.length > 0) {
+    // Merge chunks from attempt1 and attempt2 to maximize recall
+    if (attempt1.chunks.length > 0) {
+      const seen = new Set(attempt2.chunks.map(c => c.id))
+      const extra = attempt1.chunks.filter(c => !seen.has(c.id))
+      attempt2.chunks.push(...extra)
+    }
     return attempt2
   }
 
   // ATTEMPT 3: Broad Semantic Relaxation (Search related namespaces)
   console.log('[RAG] Attempt 2 failed. Attempting Stage 3: Broad Namespace Search.')
-  // We Broaden the search by using a generic 'academic' and 'admissions' combined query
   const broadQuery = `${query} admissions eligibility process requirements`
   const attempt3 = await hybridRetrieve(broadQuery, 15, { expandQueries: true })
   
+  // Return the best result we found across all attempts
+  if (attempt3.chunks.length > 0) return attempt3
+  if (attempt2.chunks.length > 0) return attempt2
+  if (attempt1.chunks.length > 0) return attempt1
   return attempt3
 }
 
@@ -408,6 +414,15 @@ export async function runRAGPipeline(
 
   // ── Build context (token-budgeted + deduplicated) ───────────────────────────
   const knowledgeContext = buildKnowledgeContext(rerankedChunks)
+  
+  // Debug: log what chunks are actually being sent to the LLM
+  console.log(`[RAG] ┌─ Context chunks passed to LLM (${rerankedChunks.length} total, confidence: ${confidence}) ──`)
+  rerankedChunks.forEach((c, i) => {
+    const preview = (c.metadata.text || '').slice(0, 150).replace(/\n/g, ' ')
+    console.log(`[RAG] │ [${i + 1}] [${c.metadata.category}] ${c.metadata.title} | score=${((c.rerankScore || c.rrfScore || c.score || 0)).toFixed(4)}`)
+    console.log(`[RAG] │     “${preview}”`)
+  })
+  console.log(`[RAG] └─ End of context ──`)
   const hallucinationGuard = buildHallucinationGuard(confidence, lang)
   const conversationHistory3 = recentHistory
     .slice(-3)
@@ -429,10 +444,10 @@ export async function runRAGPipeline(
 Your personality: Friendly, helpful, confident, and concise. You speak naturally. You do not use corporate jargon. You do not start sentences with "Certainly!" or "Of course!" or "Great question!" You just answer, like a real person would.
 
 Your rules:
-- Answer only from the context provided to you. If the context contains the answer, give it confidently and completely.
+- Answer only from the context provided to you. If the context contains the answer, give it confidently and completely — do not omit names, details, or data that is present in the context.
 - If the context does not contain the answer, say clearly: "I don't have that detail on hand right now — your best bet is to call the admissions office directly at 111-1-CUSIT (111-12-8748) or visit us on Dalazak Road." Then stop. Do not guess. Do not add generic advice.
 - Never say "based on the provided context" or "the context does not explicitly state" or "the provided context doesn't specify" — these phrases sound robotic. Just answer naturally.
-- Never write more than 4 sentences or 3 bullet points unless the question genuinely requires a list. Keep it short and human.
+- For list questions (faculty members, programs, courses, requirements), provide the FULL list from the context — do not summarize or truncate it. For non-list questions, keep answers to 4 sentences max.
 - If someone asks something outside the university scope — weather, general knowledge, other universities — say: "I'm only set up to help with CUSIT-related questions. Is there something about the university I can help you with?"
 - Respond in the same language the user writes in. If they write in Urdu, respond in Urdu. If they write in Roman Urdu, respond in Roman Urdu. If they write in English, respond in English.
 - Never start your response with "Cubot:" or your own name.
@@ -450,7 +465,7 @@ ${learnedText}`
 
   const systemPrompt = lang === 'urdu'
     ? `${baseCubotPrompt}\n\nCRITICAL: Respond in Urdu script (اردو) ONLY. (JSON keys remain English).\n\n${intentContext}${hallucinationGuard}`
-    : `${baseCubotPrompt}\n\nCRITICAL: Respond in English ONLY.\n\n${intentContext}${hallucinationGuard}\n\nADVISOR GUIDANCE: If confirmed data is scarce, share related admission resources, eligibility patterns, or contact channels professionally. NEVER simply say 'I don't know' if any related university context exist.`
+    : `${baseCubotPrompt}\n\nCRITICAL: Respond in English ONLY. When the knowledge base contains specific details (names, courses, fees, contacts), state them clearly and completely. Do not truncate or omit provided data.\n\n${intentContext}${hallucinationGuard}`
 
   const prompt = `${systemPrompt}
 ${conversationHistory3 ? `\nConversation context:\n${conversationHistory3}\n` : ''}
@@ -600,6 +615,15 @@ export async function runStreamingRAGPipeline(
   const { chunks: rawChunks, citations, confidence } = await retrieveWithFallback(searchQuery, intent)
   const rerankedChunks = await rerank(searchQuery, rawChunks, topNChunks, true)
 
+  // Debug: log what chunks are actually being sent to the LLM
+  console.log(`[RAG-Stream] ┌─ Context chunks passed to LLM (${rerankedChunks.length} total, confidence: ${confidence}) ──`)
+  rerankedChunks.forEach((c, i) => {
+    const preview = (c.metadata.text || '').slice(0, 150).replace(/\n/g, ' ')
+    console.log(`[RAG-Stream] │ [${i + 1}] [${c.metadata.category}] ${c.metadata.title} | score=${((c.rerankScore || c.rrfScore || c.score || 0)).toFixed(4)}`)
+    console.log(`[RAG-Stream] │     "${preview}"`)
+  })
+  console.log(`[RAG-Stream] └─ End of context ──`)
+
   const knowledgeContext = buildKnowledgeContext(rerankedChunks)
   const hallucinationGuard = buildHallucinationGuard(confidence, lang)
   const conversationHistory3 = recentHistory.slice(-3).map(h => `${h.role}: ${h.content}`).join('\n')
@@ -655,10 +679,10 @@ They'll be able to give you the most up-to-date answer.`;
 Your personality: Friendly, helpful, confident, and concise. You speak naturally. You do not use corporate jargon. You do not start sentences with "Certainly!" or "Of course!" or "Great question!" You just answer, like a real person would.
 
 Your rules:
-- Answer only from the context provided to you. If the context contains the answer, give it confidently and completely.
+- Answer only from the context provided to you. If the context contains the answer, give it confidently and completely — do not omit names, details, or data that is present in the context.
 - If the context does not contain the answer, say clearly: "I don't have that detail on hand right now — your best bet is to call the admissions office directly at 111-1-CUSIT (111-12-8748) or visit us on Dalazak Road." Then stop. Do not guess. Do not add generic advice.
 - Never say "based on the provided context" or "the context does not explicitly state" — these phrases sound robotic. Just answer naturally.
-- Never write more than 4 sentences or 3 bullet points unless the question genuinely requires a list. Keep it short and human.
+- For list questions (faculty members, programs, courses, requirements), provide the FULL list from the context. For non-list questions, keep answers to 4 sentences max.
 - If someone asks something outside the university scope — weather, general knowledge, other universities — say: "I'm only set up to help with CUSIT-related questions. Is there something about the university I can help you with?"
 - Respond in the same language the user writes in. If they write in Urdu, respond in Urdu. If they write in Roman Urdu, respond in Roman Urdu. If they write in English, respond in English.
 - Never start your response with "Cubot:" or your own name.
@@ -682,7 +706,7 @@ ${personaTone}
 
   const systemPrompt = lang === 'urdu'
     ? `${baseCubotPrompt}\n\nCRITICAL: Respond in Urdu script (اردو) ONLY. (JSON keys remain English).\n\n${intentContext}${hallucinationGuard}`
-    : `${baseCubotPrompt}\n\nCRITICAL: Respond in English ONLY.\n\n${intentContext}${hallucinationGuard}\n\nADVISOR GUIDANCE: Be thorough. If asked about a program, explain the admissions path. Always behave like a senior advisor.`
+    : `${baseCubotPrompt}\n\nCRITICAL: Respond in English ONLY. When the knowledge base contains specific details (names, courses, contacts, requirements), state them clearly and completely. Do not omit data from the context.\n\n${intentContext}${hallucinationGuard}`
 
   const prompt = `${systemPrompt}
 ${conversationHistory3 ? `\nConversation context:\n${conversationHistory3}\n` : ''}
