@@ -68,7 +68,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     const errorMessage = error.message || 'Unknown error occurred';
 
     // Check for specific error types or messages
-    if (errorMessage.includes('rate limit') || statusCode === 429) {
+    if (errorMessage.includes('rate limit') || errorMessage.includes('429') || statusCode === 429) {
       return NextResponse.json(
         { error: 'Too many requests. Please try again in a moment.' },
         { status: 429 }

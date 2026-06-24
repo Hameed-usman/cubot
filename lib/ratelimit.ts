@@ -29,6 +29,9 @@ const fallbackMap = new Map<string, { count: number, resetAt: number }>();
 export async function checkRateLimit(
   identifier: string
 ): Promise<{ success: boolean; reset: number }> {
+  if (process.env.NODE_ENV === 'development') {
+    return { success: true, reset: Date.now() + 60000 }
+  }
   try {
     if (rateLimiter) {
       const result = await rateLimiter.limit(identifier)

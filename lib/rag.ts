@@ -437,7 +437,7 @@ export async function runRAGPipeline(
   console.log(`[RAG] Retrieved ${rawChunks.length} candidates in ${retrievalMs}ms (confidence: ${confidence})`)
 
   // ── LLM-assisted reranking ──────────────────────────────────────────────────
-  const useLLMRerank = confidence !== 'no_data' && rawChunks.length > topNChunks
+  const useLLMRerank = confidence !== 'no_data' && rawChunks.length > 20
   const rerankedChunks = await rerank(searchQuery, rawChunks, topNChunks, useLLMRerank)
 
   // ── Build context (token-budgeted + deduplicated) ───────────────────────────
@@ -634,6 +634,20 @@ export async function runStreamingRAGPipeline(
   const { message, conversationHistory } = request
   const lang = detectLanguage(message)
 
+  const isGreeting = /^(hey|hi|hello|salam|assalam|dear|helo|hii|howdy|good morning|good evening|good afternoon)[\s!.،]*$/i.test(message.trim())
+  if (isGreeting) {
+    return new ReadableStream({
+      start(controller) {
+        const greeting = lang === 'urdu'
+          ? 'السلام علیکم! میں Cubot ہوں، CUSIT کا آفیشل AI اسسٹنٹ۔ آپ کی کیا مدد کر سکتا ہوں؟'
+          : "Hi! I'm Cubot, CUSIT's official AI assistant. How can I help you today?"
+        controller.enqueue(new TextEncoder().encode(greeting))
+        controller.enqueue(new TextEncoder().encode('\n\n[METADATA]\n{"suggestions": ["How to apply to CUSIT?", "What programs are offered?", "What are the fee structures?"]}'))
+        controller.close()
+      }
+    })
+  }
+
   // ── 1. Setup Retrieval & Reranking ──────────────────────────────────────────
   const recentHistory = conversationHistory.slice(-8)
   const searchQuery = await rewriteQuery(message, recentHistory, apiKey)
@@ -641,7 +655,7 @@ export async function runStreamingRAGPipeline(
   const topNChunks = isListQuery ? 12 : 10
 
   const { chunks: rawChunks, citations, confidence } = await retrieveWithFallback(searchQuery, intent)
-  const useLLMRerank = confidence !== 'no_data' && rawChunks.length > topNChunks
+  const useLLMRerank = confidence !== 'no_data' && rawChunks.length > 20
   const rerankedChunks = await rerank(searchQuery, rawChunks, topNChunks, useLLMRerank)
 
   // Debug: log what chunks are actually being sent to the LLM
@@ -758,7 +772,7 @@ Answer (${lang === 'urdu' ? 'URDU ONLY' : 'ENGLISH ONLY'}):`
     }),
   })
 
-  if (!response.ok) throw new Error(`Groq API Error: ${response.status}`)
+  if (!response.ok) throw new AppError(`Groq API Error: ${response.status}`, response.status, 'API_ERROR')
 
   const encoder = new TextEncoder()
   const decoder = new TextDecoder()

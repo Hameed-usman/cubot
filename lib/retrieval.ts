@@ -110,7 +110,7 @@ function getTargetNamespaces(query: string): string[] {
  * On error, gracefully returns just the original query.
  */
 async function expandQuery(query: string, apiKey: string): Promise<string[]> {
-  if (!apiKey || query.length < 8) return [query]
+  if (!apiKey || query.length < 15) return [query]
 
   try {
     const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
