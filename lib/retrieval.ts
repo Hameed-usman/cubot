@@ -19,7 +19,7 @@ import { RankedChunk, ChunkMetadata, Citation, ConfidenceLevel } from '@/types'
 const TOP_K_VECTOR = 30    // Per query variant (3 variants × 30 = up to 90 candidates before dedup)
 const TOP_K_KEYWORD = 40
 const RRF_K = 60           // RRF constant
-const MIN_VECTOR_SCORE = 0.15 // Filter out low-confidence vectors
+const MIN_VECTOR_SCORE = 0.10 // Filter out low-confidence vectors
 
 // ─── University Synonyms ───────────────────────────────────────────────────────
 
@@ -150,7 +150,7 @@ Alternatives:`,
 
 // ─── Vector Search (Multi-query + Multi-namespace) ─────────────────────────────
 
-async function vectorSearch(queries: string[], topK: number = TOP_K_VECTOR): Promise<RankedChunk[]> {
+async function vectorSearch(queries: string[], topK: number = TOP_K_VECTOR, globalNamespaceOnly: boolean = false): Promise<RankedChunk[]> {
   const index = pineconeIndex.get()
   if (!index) return []
 
@@ -163,7 +163,7 @@ async function vectorSearch(queries: string[], topK: number = TOP_K_VECTOR): Pro
 
     await Promise.all(queries.map(async (query, qi) => {
       const embedding = embeddings[qi]
-      const targetNamespaces = getTargetNamespaces(query)
+      const targetNamespaces = globalNamespaceOnly ? [] : getTargetNamespaces(query)
 
       // Each namespace gets the FULL topK budget — deduplication handles overlap.
       // Previously dividing topK by namespace count caused severe recall loss.
@@ -180,7 +180,7 @@ async function vectorSearch(queries: string[], topK: number = TOP_K_VECTOR): Pro
       // Also search without namespace filter for a global catch-all
       const globalPromise = index.query({
         vector: embedding,
-        topK: Math.ceil(topK / 2),
+        topK: globalNamespaceOnly ? topK : Math.ceil(topK / 2),
         includeMetadata: true,
       }).then(r => r.matches || [])
 
@@ -363,7 +363,7 @@ export interface RetrievalResult {
 export async function hybridRetrieve(
   query: string,
   topK: number = 50,
-  options: { expandQueries?: boolean } = { expandQueries: true }
+  options: { expandQueries?: boolean; globalNamespaceOnly?: boolean } = { expandQueries: true }
 ): Promise<RetrievalResult> {
   const pineconeAvailable = !!pineconeIndex.get()
   const apiKey = process.env.GROQ_API_KEY || ''
@@ -390,7 +390,7 @@ export async function hybridRetrieve(
 
   if (pineconeAvailable) {
     const [vectorResults, keywordResults] = await Promise.all([
-      vectorSearch(searchQueries, TOP_K_VECTOR),
+      vectorSearch(searchQueries, options.globalNamespaceOnly ? topK : TOP_K_VECTOR, options.globalNamespaceOnly),
       keywordSearch(cleanQuery, TOP_K_KEYWORD),   // FTS always uses original query
     ])
 

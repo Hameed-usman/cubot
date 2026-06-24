@@ -96,7 +96,7 @@ async function logQuery(params: {
 // CONTEXT BUILDER — Token-Budgeted
 // =====================================================
 
-const MAX_CONTEXT_CHARS = 12000 // ~3000 tokens — safe context budget for LLM
+const MAX_CONTEXT_CHARS = 24000 // ~6000 tokens — safe context budget for LLM
 
 /**
  * Builds the knowledge context string with a token budget.
@@ -191,9 +191,7 @@ async function rewriteQuery(
     return message
   }
 
-  const recentHistory = conversationHistory.slice(-8)
-
-  const historyText = recentHistory
+  const historyText = conversationHistory
     .slice(-4)
     .map(h => `${h.role === 'user' ? 'User' : 'Assistant'}: ${h.content}`)
     .join('\n')
@@ -303,11 +301,10 @@ async function retrieveWithFallback(
   }
 
   // ATTEMPT 2: Synonym Expansion + Multi-Query variant
-  // NOTE: We no longer exit early on no_data — keyword/BM25 search may still find results
-  // even when vector search returns nothing (e.g., due to namespace mismatch).
   console.log('[RAG] Attempt 1 low confidence. Attempting Stage 2: Synonym Expansion.')
   const expandedQuery = expandSynonyms(query)
-  const attempt2 = await hybridRetrieve(expandedQuery, 10, { expandQueries: true })
+  const attempt2 = await hybridRetrieve(expandedQuery, 15, { expandQueries: true })
+  
   if (attempt2.confidence !== 'no_data' && attempt2.chunks.length > 0) {
     // Merge chunks from attempt1 and attempt2 to maximize recall
     if (attempt1.chunks.length > 0) {
@@ -315,19 +312,50 @@ async function retrieveWithFallback(
       const extra = attempt1.chunks.filter(c => !seen.has(c.id))
       attempt2.chunks.push(...extra)
     }
-    return attempt2
+    if (attempt2.confidence === 'high' || (attempt2.confidence === 'medium' && attempt2.chunks.length >= 3)) {
+      return attempt2
+    }
   }
 
-  // ATTEMPT 3: Broad Semantic Relaxation (Search related namespaces)
-  console.log('[RAG] Attempt 2 failed. Attempting Stage 3: Broad Namespace Search.')
-  const broadQuery = `${query} admissions eligibility process requirements`
-  const attempt3 = await hybridRetrieve(broadQuery, 15, { expandQueries: true })
+  // ATTEMPT 3: Broad Semantic Relaxation (Intent-aware)
+  let attempt3: RetrievalAttempt = { chunks: [], citations: [], confidence: 'no_data' }
+  const isAdmissionsRelated = /admission|apply|enroll|eligib|entry test|fee|scholarship/i.test(query) || intent.includes('admission')
   
+  if (isAdmissionsRelated) {
+    console.log('[RAG] Attempt 2 low confidence. Attempting Stage 3: Admissions Broad Search.')
+    const broadQuery = `${query} details requirements process`
+    attempt3 = await hybridRetrieve(broadQuery, 20, { expandQueries: true })
+    if (attempt3.confidence !== 'no_data' && attempt3.chunks.length > 0) {
+      if (attempt2.chunks.length > 0) {
+        const seen = new Set(attempt3.chunks.map(c => c.id))
+        const extra = attempt2.chunks.filter(c => !seen.has(c.id))
+        attempt3.chunks.push(...extra)
+      }
+      if (attempt3.confidence === 'high' || (attempt3.confidence === 'medium' && attempt3.chunks.length >= 3)) {
+         return attempt3
+      }
+    }
+  } else {
+    console.log('[RAG] Skipping Stage 3 because intent is not admissions-related.')
+  }
+
+  // ATTEMPT 4: Global Namespace Brute-force Recall Recovery (Issue 3)
+  console.log('[RAG] Confidence still low. Attempting Stage 4: Global Namespace Brute-force.')
+  const attempt4 = await hybridRetrieve(query, 50, { expandQueries: true, globalNamespaceOnly: true })
+  
+  if (attempt4.chunks.length > 0) {
+     const bestSoFar = attempt3.chunks.length > 0 ? attempt3 : (attempt2.chunks.length > 0 ? attempt2 : attempt1)
+     const seen = new Set(attempt4.chunks.map(c => c.id))
+     const extra = bestSoFar.chunks.filter(c => !seen.has(c.id))
+     attempt4.chunks.push(...extra)
+     return attempt4
+  }
+
   // Return the best result we found across all attempts
   if (attempt3.chunks.length > 0) return attempt3
   if (attempt2.chunks.length > 0) return attempt2
   if (attempt1.chunks.length > 0) return attempt1
-  return attempt3
+  return attempt4
 }
 
 // =====================================================
@@ -399,7 +427,7 @@ export async function runRAGPipeline(
 
   // ── Dynamic retrieval limit for list/aggregation queries ────────────────────
   const isListQuery = /all|list|multiple|who are|teachers|faculty|professors|staff|courses|programs/i.test(message)
-  const topNChunks = isListQuery ? 12 : 5
+  const topNChunks = isListQuery ? 12 : 10
 
   // ── Retrieval with 3-attempt fallback ────────────────────────────────────────
   const retrievalStart = Date.now()
@@ -610,10 +638,11 @@ export async function runStreamingRAGPipeline(
   const recentHistory = conversationHistory.slice(-8)
   const searchQuery = await rewriteQuery(message, recentHistory, apiKey)
   const isListQuery = /all|list|multiple|who are|teachers|faculty|professors|staff|courses|programs/i.test(message)
-  const topNChunks = isListQuery ? 12 : 5
+  const topNChunks = isListQuery ? 12 : 10
 
   const { chunks: rawChunks, citations, confidence } = await retrieveWithFallback(searchQuery, intent)
-  const rerankedChunks = await rerank(searchQuery, rawChunks, topNChunks, true)
+  const useLLMRerank = confidence !== 'no_data' && rawChunks.length > topNChunks
+  const rerankedChunks = await rerank(searchQuery, rawChunks, topNChunks, useLLMRerank)
 
   // Debug: log what chunks are actually being sent to the LLM
   console.log(`[RAG-Stream] ┌─ Context chunks passed to LLM (${rerankedChunks.length} total, confidence: ${confidence}) ──`)
