@@ -16,7 +16,7 @@ if (isUpstashConfigured) {
 
   rateLimiter = new Ratelimit({
     redis,
-    limiter: Ratelimit.slidingWindow(10, '1 m'),
+    limiter: Ratelimit.slidingWindow(20, '1 m'),
     prefix: 'cubot:ratelimit',
   })
 } else {
@@ -53,7 +53,7 @@ export async function checkRateLimit(
     record.count += 1;
     fallbackMap.set(identifier, record);
 
-    if (record.count > 10) {
+    if (record.count > 20) {
       return { success: false, reset: record.resetAt };
     }
 

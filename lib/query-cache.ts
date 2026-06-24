@@ -119,7 +119,14 @@ async function getRedis(): Promise<any | null> {
  * Normalizes whitespace and case for better hit rates.
  */
 export function buildCacheKey(query: string, intent?: string): string {
-  const normalized = query.toLowerCase().replace(/\s+/g, ' ').trim()
+  // Normalize aggressively so similar questions share the same cache entry:
+  // "What is the fee?" / "what is fee" / "fees?" → all hit same cache key
+  const normalized = query
+    .toLowerCase()
+    .replace(/[?!.,،؟]/g, '')           // remove punctuation
+    .replace(/\b(the|a|an|is|are|what|whats|tell|me|about|please|kindly|can|you|i|want|to|know|of|for|in)\b/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
   const raw = intent ? `${normalized}::${intent}` : normalized
   return `cubot:rag:${createHash('md5').update(raw).digest('hex')}`
 }

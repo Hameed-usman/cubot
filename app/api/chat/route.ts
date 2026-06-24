@@ -67,6 +67,20 @@ export async function POST(request: NextRequest): Promise<Response> {
     const statusCode = error.statusCode || 500;
     const errorMessage = error.message || 'Unknown error occurred';
 
+    if (errorMessage.includes('QUEUE_FULL')) {
+      return NextResponse.json(
+        { error: 'Cubot is very busy right now. Please wait 10 seconds and try again.' },
+        { status: 503 }
+      )
+    }
+
+    if (errorMessage.includes('QUEUE_TIMEOUT')) {
+      return NextResponse.json(
+        { error: 'Your request took too long in queue. Please try again.' },
+        { status: 503 }
+      )
+    }
+
     // Check for specific error types or messages
     if (errorMessage.includes('rate limit') || errorMessage.includes('429') || statusCode === 429) {
       return NextResponse.json(

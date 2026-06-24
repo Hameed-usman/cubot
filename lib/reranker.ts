@@ -1,4 +1,5 @@
 import { RankedChunk, PageType } from '@/types'
+import { withGroqQueue } from './groq-queue'
 
 /**
  * Enterprise Reranker v2 — Heuristic Pre-filter + LLM Cross-encoder
@@ -225,21 +226,23 @@ Scoring criteria:
 Return JSON object only:`
 
   try {
-    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'llama-3.1-8b-instant',
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 0.0,
-        max_tokens: 200,
-        response_format: { type: 'json_object' },
-      }),
-      signal: AbortSignal.timeout(5000),
-    })
+    const response = await withGroqQueue(() =>
+      fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'llama-3.1-8b-instant',
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0.0,
+          max_tokens: 200,
+          response_format: { type: 'json_object' },
+        }),
+        signal: AbortSignal.timeout(5000),
+      })
+    )
 
     if (!response.ok) throw new Error(`Groq ${response.status}`)
 

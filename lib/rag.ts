@@ -5,6 +5,7 @@ import { rerank } from './reranker'
 import { AppError } from './errors'
 import { getCachedResult, setCachedResult, CachedRAGResult } from './query-cache'
 import sql from './db'
+import { withGroqQueue } from './groq-queue'
 
 // We use the standard ReadableStream and TransformStream which are global in Next.js/Node 18+
 
@@ -213,20 +214,22 @@ New Message: ${message}
 Standalone Search Query:`
 
   try {
-    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'llama-3.1-8b-instant',
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 0.1,
-        max_tokens: 80,
-      }),
-      signal: AbortSignal.timeout(4000),
-    })
+    const response = await withGroqQueue(() =>
+      fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'llama-3.1-8b-instant',
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0.1,
+          max_tokens: 80,
+        }),
+        signal: AbortSignal.timeout(4000),
+      })
+    )
 
     if (response.ok) {
       const data = await response.json()
@@ -528,22 +531,24 @@ They'll be able to give you the most up-to-date answer.`;
 
     // ── Groq API call ───────────────────────────────────────────────────────────
     try {
-      const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'llama-3.3-70b-versatile',
-          messages: [{ role: 'user', content: prompt }],
-          temperature: 0.15,
-          max_tokens: 1200,
-          response_format: { type: 'json_object' },
-          stream: false, // Explicitly false for the sync version
-        }),
-        signal: AbortSignal.timeout(30000),
-      })
+      const response = await withGroqQueue(() =>
+        fetch('https://api.groq.com/openai/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: 'llama-3.3-70b-versatile',
+            messages: [{ role: 'user', content: prompt }],
+            temperature: 0.15,
+            max_tokens: 1200,
+            response_format: { type: 'json_object' },
+            stream: false, // Explicitly false for the sync version
+          }),
+          signal: AbortSignal.timeout(30000),
+        })
+      )
 
       if (!response.ok) {
         console.error(`[Groq] API Error: ${response.status} ${response.statusText}`)
@@ -757,20 +762,22 @@ User question: ${message}
 Answer (${lang === 'urdu' ? 'URDU ONLY' : 'ENGLISH ONLY'}):`
 
   // ── 3. Start Groq Stream ────────────────────────────────────────────────────
-  const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'llama-3.3-70b-versatile',
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.1, // Reduced temperature for stricter answers
-      max_tokens: 1200,
-      stream: true,
-    }),
-  })
+  const response = await withGroqQueue(() =>
+    fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'llama-3.3-70b-versatile',
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.1, // Reduced temperature for stricter answers
+        max_tokens: 1200,
+        stream: true,
+      }),
+    })
+  )
 
   if (!response.ok) throw new AppError(`Groq API Error: ${response.status}`, response.status, 'API_ERROR')
 
