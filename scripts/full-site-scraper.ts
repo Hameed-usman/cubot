@@ -689,6 +689,126 @@ async function runCrawler() {
   }
 }
 
+// ─── Single-Page Scrape (Admin Sync) ────────────────────────────────────
+
+/**
+ * Scrapes and embeds exactly ONE URL, then returns.
+ * 
+ * Key differences from runCrawler():
+ * - NO domain allowlist check — any URL is accepted (admin is trusted)
+ * - NO link following — only processes the given page
+ * - NO infinite loop — returns after the single page is done
+ * - Registers a crawl_run entry for observability dashboard
+ */
+export async function scrapeUrlOnce(url: string): Promise<{ success: boolean; chunksCreated: number; error?: string }> {
+  console.log(`[ScrapeOnce] Starting single-page scrape: ${url}`)
+
+  const runId = uuidv4()
+  const startedAt = new Date()
+
+  // Register a crawl_run so the dashboard shows activity
+  try {
+    await sql`
+      INSERT INTO crawl_runs (id, status, started_at)
+      VALUES (${runId}, 'running', ${startedAt.toISOString()})
+    `
+    console.log(`[ScrapeOnce] Crawl run registered: ${runId}`)
+  } catch (e: any) {
+    console.warn(`[ScrapeOnce] Could not register crawl run (non-fatal): ${e.message}`)
+  }
+
+  let chunksCreated = 0
+  let finalStatus = 'completed'
+  let errorLog: string | null = null
+
+  try {
+    // Fetch the page (no If-Modified-Since for manual syncs — always re-fetch)
+    const { html, status, error } = await fetchPageWithChangeDetection(url)
+
+    if (status === 'failed') {
+      throw new Error(error || 'Failed to fetch page')
+    }
+
+    if (html.length < 200) {
+      throw new Error('Page returned insufficient HTML (may require JavaScript rendering)')
+    }
+
+    const { title, content, links } = await extractContent(html, url)
+
+    if (content.length < 50) {
+      throw new Error('Insufficient text content extracted from page')
+    }
+
+    const contentHash = (await import('crypto')).createHash('md5').update(content).digest('hex')
+    const classification = classifyPage(url, title, content.slice(0, 1000))
+    const breadcrumb = buildBreadcrumb(url)
+    const parentPageId = uuidv4()
+
+    const chunks = semanticChunk(content, {
+      title,
+      sourceUrl: url,
+      department: classification.department,
+      category: classification.category,
+      pageType: classification.pageType,
+      breadcrumb,
+      sourceType: 'webpage',
+      contentHash,
+      crawledAt: new Date().toISOString(),
+    })
+
+    console.log(`[ScrapeOnce] Extracted ${chunks.length} chunks from: ${title}`)
+
+    if (chunks.length > 0) {
+      const result = await upsertPageChunks({
+        chunks: chunks.map(c => ({
+          text: c.text,
+          chunkIndex: c.metadata.chunkIndex,
+          keywords: (c.metadata as any).keywords || [],
+          sectionName: (c.metadata as any).sectionName || '',
+        })),
+        title,
+        category: classification.category,
+        sourceUrl: url,
+        sourceType: 'webpage',
+        pageType: classification.pageType,
+        breadcrumb,
+        parentPageId,
+      })
+
+      chunksCreated = result.upserted
+      console.log(`[ScrapeOnce] ✓ Done. Upserted: ${result.upserted}, Skipped: ${result.skipped}, Failed: ${result.failed}`)
+    }
+
+    // Mark crawl_run as completed
+    await sql`
+      UPDATE crawl_runs
+      SET status = 'completed',
+          pages_crawled = 1,
+          chunks_created = ${chunksCreated},
+          completed_at = CURRENT_TIMESTAMP
+      WHERE id = ${runId}
+    `.catch(() => {})
+
+    return { success: true, chunksCreated }
+  } catch (error: any) {
+    finalStatus = 'failed'
+    errorLog = error.message || 'Unknown error'
+    console.error(`[ScrapeOnce] Error scraping ${url}:`, error.message)
+
+    // Mark crawl_run as failed
+    await sql`
+      UPDATE crawl_runs
+      SET status = 'failed',
+          pages_failed = 1,
+          error_log = ${errorLog},
+          completed_at = CURRENT_TIMESTAMP
+      WHERE id = ${runId}
+    `.catch(() => {})
+
+    return { success: false, chunksCreated: 0, error: error.message }
+  }
+}
+
 // ─── Export for programmatic use ─────────────────────────────────────────────
 export { runCrawler }
 

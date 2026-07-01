@@ -69,13 +69,13 @@ export async function GET(req: NextRequest) {
       WHERE created_at > NOW() - INTERVAL '7 days'
     `
 
-    const noDataRate = await sql`
-      SELECT 
-        COUNT(*) as total,
-        COALESCE(SUM(CASE WHEN confidence = 'no_data' THEN 1 ELSE 0 END), 0) as no_data_count
-      FROM retrieval_logs
-      WHERE created_at > NOW() - INTERVAL '30 days'
-    `
+    const totalConv30d = await sql`SELECT COUNT(*) as total FROM conversations WHERE created_at > NOW() - INTERVAL '30 days'`
+    const unansweredCount = await sql`SELECT COUNT(*) as count FROM unanswered_questions WHERE created_at > NOW() - INTERVAL '30 days'`
+
+    const noDataRate = [{
+      total: Number(totalConv30d[0]?.total) || 0,
+      no_data_count: Number(unansweredCount[0]?.count) || 0
+    }]
 
     return NextResponse.json({
       metrics: {

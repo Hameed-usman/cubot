@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAdminAuth } from '@/lib/adminAuth'
-import { hybridRetrieve } from '@/lib/retrieval'
+import { hybridRetrieve, getTargetNamespaces, expandQuery } from '@/lib/retrieval'
 import { rerank } from '@/lib/reranker'
-import { embedQuery } from '@/lib/embeddings'
 
 export const dynamic = 'force-dynamic'
 
@@ -17,20 +16,30 @@ export async function POST(req: NextRequest) {
     }
 
     const t0 = performance.now()
+    const apiKey = process.env.GROQ_API_KEY || ''
+    
+    // 1. Get query expansions
+    const expandedQueries = await expandQuery(query, apiKey)
+    
+    // 2. Get target namespaces
+    const namespaces = getTargetNamespaces(query)
 
-    // We can simulate what hybridRetrieve does internally or just call it.
-    // hybridRetrieve already handles intent routing, expanding, and retrieving.
-    const retrievedResult = await hybridRetrieve(query)
+    // 3. Run full retrieval
+    const retrievedResult = await hybridRetrieve(query, 50, { expandQueries: true })
 
     const t1 = performance.now()
 
+    // 4. Rerank top results
     const rerankedChunks = await rerank(query, retrievedResult.chunks)
     
     const t2 = performance.now()
 
     return NextResponse.json({
       success: true,
-      query,
+      originalQuery: query,
+      rewrittenQueries: expandedQueries.filter(q => q !== query),
+      namespaces,
+      confidence: retrievedResult.confidence,
       pipeline: {
         retrieval_ms: Math.round(t1 - t0),
         rerank_ms: Math.round(t2 - t1),
@@ -39,6 +48,7 @@ export async function POST(req: NextRequest) {
       results: rerankedChunks.slice(0, 10).map(chunk => ({
         id: chunk.id,
         score: chunk.score,
+        bm25Score: chunk.bm25Score || 0,
         rerankScore: chunk.rerankScore || chunk.score,
         metadata: chunk.metadata
       }))

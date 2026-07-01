@@ -59,7 +59,7 @@ function expandSynonyms(query: string): string {
  * Maps a classified intent/query to the most relevant namespaces to search.
  * Primary namespace searched first (higher weight), then global fallback.
  */
-function getTargetNamespaces(query: string): string[] {
+export function getTargetNamespaces(query: string): string[] {
   const q = query.toLowerCase()
 
   // Build ordered list — most specific namespace first
@@ -84,6 +84,9 @@ function getTargetNamespaces(query: string): string[] {
     namespaces.push('policies')
   if (/contact|phone|email|address|location|reach|visit|map|directions/i.test(q))
     namespaces.push('contact')
+  // Department-level routing: catches 'department', 'dept', 'list of departments', etc.
+  if (/department|dept|all department|faculties|our department|list of department/i.test(q))
+    namespaces.push('departments', 'academic', 'faculty')
   if (/\b(cs|bscs|mscs|software|computer.?science|it|bsit)\b/i.test(q))
     namespaces.push('dept-cs')
   if (/\b(bba|mba|business|management|commerce)\b/i.test(q))
@@ -110,7 +113,7 @@ function getTargetNamespaces(query: string): string[] {
  * Returns original + up to 2 expansions.
  * On error, gracefully returns just the original query.
  */
-async function expandQuery(query: string, apiKey: string): Promise<string[]> {
+export async function expandQuery(query: string, apiKey: string): Promise<string[]> {
   if (!apiKey || query.length < 15) return [query]
 
   try {
@@ -430,23 +433,39 @@ export async function hybridRetrieve(
 
   // ── Confidence scoring ────────────────────────────────────────────────────
   // RRF scores are bounded by 1/(k+rank). With k=60, max score ≈ 1/61 ≈ 0.0164.
-  // Previous thresholds (>0.35, >0.15) were mathematically impossible to reach,
-  // causing every query to be permanently stuck at 'low' confidence.
-  // Thresholds below are calibrated to real RRF score distributions:
-  //   high   → topScore > 0.012 (rank ≤ 22 in the fused list, meaning strong vector+keyword match)
-  //   medium → topScore > 0.005 (rank ≤ 139, any meaningful match found)
+  //
+  // HALLUCINATION GUARD: We use a TWO-SIGNAL gate:
+  //   1. rrfScore threshold (structural: was the result ranked highly?)
+  //   2. bm25Score > 0 check (semantic: did ANY keyword from the query match?)
+  //
+  // If bm25Score is 0 for all top chunks, it means the entity (e.g. 'moon department')
+  // does not exist in our knowledge base at all — we should NOT answer confidently.
+  //
+  // Thresholds calibrated to real RRF score distributions:
+  //   high   → rrfScore > 0.014 AND top chunk has BM25 signal (real entity match)
+  //   medium → rrfScore > 0.006 (weak match found, answer cautiously)
   //   low    → any results exist
   let confidence: ConfidenceLevel = 'no_data'
   const topScore = merged[0]?.rrfScore || merged[0]?.score || 0
+  const topBm25 = merged[0]?.bm25Score || 0
+  const anyBm25Match = merged.slice(0, 5).some(c => (c.bm25Score || 0) > 0)
+
   if (merged.length === 0) {
     confidence = 'no_data'
-  } else if (merged.length >= 5 && topScore > 0.012) {
+  } else if (merged.length >= 5 && topScore > 0.014 && anyBm25Match) {
+    // HIGH: strong RRF rank AND actual keyword evidence in the knowledge base
     confidence = 'high'
-  } else if (merged.length >= 2 && topScore > 0.005) {
+  } else if (merged.length >= 5 && topScore > 0.014 && !anyBm25Match) {
+    // Vectors matched but NO keyword hit = likely a hallucination-prone query
+    // (e.g. 'moon department' — similar vectors exist but entity doesn't)
+    confidence = 'low'
+  } else if (merged.length >= 2 && topScore > 0.006) {
     confidence = 'medium'
   } else if (merged.length >= 1) {
     confidence = 'low'
   }
+
+  console.log(`[Retrieval] Confidence: ${confidence} | topRRF=${topScore.toFixed(4)} | topBM25=${topBm25.toFixed(4)} | anyBM25=${anyBm25Match} | chunks=${merged.length}`)
 
   return { chunks: merged, citations, confidence }
 }

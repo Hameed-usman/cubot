@@ -50,12 +50,23 @@ const handler = NextAuth({
           }
         }
 
-        const adminUsername = process.env.ADMIN_USERNAME;
-        const adminPasswordHash = process.env.ADMIN_PASSWORD_HASH;
+        let adminUsername = process.env.ADMIN_USERNAME;
+        let adminPasswordHash = process.env.ADMIN_PASSWORD_HASH;
         const adminPasswordPlain = process.env.ADMIN_PASSWORD;
 
+        // Fetch overrides from database
+        try {
+          const configRes = await sql`SELECT key, value FROM admin_config WHERE key IN ('admin_username', 'admin_password_hash')`;
+          configRes.forEach(row => {
+            if (row.key === 'admin_username') adminUsername = row.value;
+            if (row.key === 'admin_password_hash') adminPasswordHash = row.value;
+          });
+        } catch (err) {
+          console.error("Error fetching credentials from DB:", err);
+        }
+
         if (!adminUsername) {
-          console.error("ADMIN_USERNAME is not set in environment variables");
+          console.error("ADMIN_USERNAME is not set in environment variables or DB");
           return null;
         }
 

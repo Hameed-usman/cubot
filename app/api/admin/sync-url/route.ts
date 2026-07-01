@@ -1,14 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { runCrawler } from '@/scripts/full-site-scraper'
-import sql from '@/lib/db'
-import { getServerSession } from 'next-auth'
+import { scrapeUrlOnce } from '@/scripts/full-site-scraper'
 import { requireAdminAuth } from '@/lib/adminAuth'
 
 export const dynamic = 'force-dynamic'
+// Increase timeout: scraping + embedding one page can take ~30-60 seconds
+export const maxDuration = 120
 
 /**
  * POST /api/admin/sync-url
- * Instantly syncs a single URL to the knowledge base.
+ * Scrapes and embeds a single URL into the knowledge base, then returns.
+ * Uses scrapeUrlOnce() instead of runCrawler() to avoid an infinite polling loop.
  */
 export async function POST(req: NextRequest) {
   try {
@@ -18,16 +19,26 @@ export async function POST(req: NextRequest) {
     const { url } = await req.json()
     if (!url) return NextResponse.json({ error: 'URL is required' }, { status: 400 })
 
-    console.log(`[Sync] Manual sync requested for: ${url}`)
-    
-    // Execute crawler for single URL
-    // We run it as high priority (single URL doesn't take long)
-    await sql`INSERT INTO crawl_queue (url, depth, priority) VALUES (${url}, 0, 1) ON CONFLICT DO NOTHING`;
-    await runCrawler()
+    // Validate URL format
+    try { new URL(url) } catch {
+      return NextResponse.json({ error: 'Invalid URL format' }, { status: 400 })
+    }
 
-    return NextResponse.json({ 
-      success: true, 
-      message: `Successfully synced: ${url}` 
+    console.log(`[Sync] Manual sync requested for: ${url}`)
+
+    const result = await scrapeUrlOnce(url)
+
+    if (!result.success) {
+      return NextResponse.json(
+        { error: result.error || 'Failed to scrape page' },
+        { status: 500 }
+      )
+    }
+
+    return NextResponse.json({
+      success: true,
+      message: `Successfully synced: ${url}`,
+      chunksCreated: result.chunksCreated,
     })
   } catch (error: any) {
     console.error('[Sync] Error:', error)

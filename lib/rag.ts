@@ -56,17 +56,6 @@ async function logQuery(params: {
 }) {
   try {
     await sql`
-      INSERT INTO query_logs (
-        id, query, intent, confidence, response_length, 
-        retrieval_ms, total_ms, cache_hit
-      ) VALUES (
-        ${params.id}, ${params.query}, ${params.intent}, ${params.confidence}, 
-        ${params.responseLength}, ${params.retrievalMs}, ${params.totalMs}, 
-        ${params.cacheHit || false}
-      )
-    `
-
-    await sql`
       INSERT INTO retrieval_logs (
         id, query, intent, confidence, response_length, 
         retrieval_ms, total_ms, cache_hit
@@ -342,11 +331,12 @@ async function retrieveWithFallback(
     console.log('[RAG] Skipping Stage 3 because intent is not admissions-related.')
   }
 
-  // ATTEMPT 4: Global Namespace Brute-force Recall Recovery (Issue 3)
+  // ATTEMPT 4: Global Namespace Brute-force Recall Recovery
   console.log('[RAG] Confidence still low. Attempting Stage 4: Global Namespace Brute-force.')
   const attempt4 = await hybridRetrieve(query, 50, { expandQueries: true, globalNamespaceOnly: true })
 
-  if (attempt4.chunks.length > 0) {
+  if (attempt4.confidence === 'high' || attempt4.confidence === 'medium') {
+    // Only trust attempt4 if it found genuinely confident results
     const bestSoFar = attempt3.chunks.length > 0 ? attempt3 : (attempt2.chunks.length > 0 ? attempt2 : attempt1)
     const seen = new Set(attempt4.chunks.map(c => c.id))
     const extra = bestSoFar.chunks.filter(c => !seen.has(c.id))
@@ -354,11 +344,16 @@ async function retrieveWithFallback(
     return attempt4
   }
 
-  // Return the best result we found across all attempts
-  if (attempt3.chunks.length > 0) return attempt3
-  if (attempt2.chunks.length > 0) return attempt2
-  if (attempt1.chunks.length > 0) return attempt1
-  return attempt4
+  // All 4 attempts failed to find confident results.
+  // Pick the best available confidence level; if everything is 'low', return no_data
+  // so the hallucination guard fires and the question gets logged as unanswered.
+  const candidates = [attempt3, attempt2, attempt1, attempt4].filter(a => a.chunks.length > 0)
+  const bestMedium = candidates.find(a => a.confidence === 'medium')
+  if (bestMedium) return bestMedium
+
+  // All low or no data — treat as no_data to avoid hallucination
+  console.log('[RAG] All attempts returned low/no confidence. Treating as no_data.')
+  return { chunks: [], citations: [], confidence: 'no_data' }
 }
 
 // =====================================================
@@ -513,11 +508,15 @@ Answer (${lang === 'urdu' ? 'URDU ONLY' : 'ENGLISH ONLY'}, MUST BE VALID JSON):`
 
 They'll be able to give you the most up-to-date answer.`;
 
-    // Log unanswered query
+    // Unconditionally log unanswered question — no sessionId dependency
     sql`
       INSERT INTO unanswered_questions (question_text, language, persona, tier_reached)
       VALUES (${message}, ${lang}, ${intent}, 'tier3')
-    `.catch(() => { });
+    `.then(() => {
+      console.log(`[RAG] Unanswered question logged: "${message.slice(0, 60)}"`)
+    }).catch(err => {
+      console.error('[RAG] Failed to log unanswered question (non-streaming):', err)
+    });
 
     return {
       content: fallbackMessage,
@@ -686,26 +685,22 @@ export async function runStreamingRAGPipeline(
 
 They'll be able to give you the most up-to-date answer.`;
 
+    // Unconditionally log unanswered question — no sessionId or conversations dependency.
+    // This runs before streaming starts to guarantee the DB write happens even if the
+    // stream is cancelled early by the client.
+    sql`
+      INSERT INTO unanswered_questions (question_text, language, persona, tier_reached)
+      VALUES (${message}, ${lang}, ${intent}, 'tier3')
+    `.then(() => {
+      console.log(`[RAG] Unanswered question logged: "${message.slice(0, 60)}"`)
+    }).catch(err => {
+      console.error('[RAG] Failed to log unanswered question (streaming):', err)
+    });
+
     return new ReadableStream({
       start(controller) {
         controller.enqueue(new TextEncoder().encode(fallbackMessage));
         controller.enqueue(new TextEncoder().encode('\n\n[METADATA]\n{"suggestions": ["How to apply?", "What are the contact details?"]}'));
-
-        // Log unanswered query
-        if (request.sessionId) {
-          sql`
-            INSERT INTO conversations (session_id, user_message, bot_response, persona, language, response_source, is_unanswered)
-            VALUES (${request.sessionId}, ${message}, ${fallbackMessage}, ${intent}, ${lang}, 'fallback', true)
-            RETURNING id
-          `.then(async (res) => {
-            if (res.length > 0) {
-              await sql`
-                INSERT INTO unanswered_questions (conversation_id, question_text, language, persona, tier_reached)
-                VALUES (${res[0].id}, ${message}, ${lang}, ${intent}, 'tier3')
-              `
-            }
-          }).catch(err => console.error('[RAG] Fallback log error:', err))
-        }
         controller.close();
       }
     });
