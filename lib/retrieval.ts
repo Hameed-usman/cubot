@@ -3,7 +3,7 @@ import { embedBatch, embedQueryBatch } from './embeddings'
 import { pineconeIndex } from './pinecone'
 import { categoryToNamespace } from './embed-and-store'
 import { RankedChunk, ChunkMetadata, Citation, ConfidenceLevel } from '@/types'
-import { withGroqQueue } from './groq-queue'
+import { groqFetchWithRetry } from './groq-queue'
 
 /**
  * Enterprise Hybrid Retrieval Engine — v2
@@ -114,7 +114,7 @@ async function expandQuery(query: string, apiKey: string): Promise<string[]> {
   if (!apiKey || query.length < 15) return [query]
 
   try {
-    const resp = await withGroqQueue(() => 
+    const resp = await groqFetchWithRetry(() =>
       fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
         headers: {

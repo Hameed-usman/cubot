@@ -1,133 +1,252 @@
 'use client'
 
-import { useState } from 'react'
-import { Edit3, Save, CheckCircle, AlertTriangle, Loader2 } from 'lucide-react'
-
-const NAMESPACES = [
-  'academic', 'admissions', 'alumni', 'contact', 'dept-bba', 
-  'dept-cs', 'dept-nursing', 'dept-pharmacy', 'events', 
-  'facilities', 'faculty', 'finance', 'general', 'notices', 
-  'policies', 'scholarships'
-]
+import { useState, useEffect } from 'react'
+import { Plus, Search, Edit2, Trash2, RefreshCw, Layers } from 'lucide-react'
 
 export default function ManualEntryTab() {
-  const [namespace, setNamespace] = useState('')
+  const [entries, setEntries] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState('')
+  const [categoryFilter, setCategoryFilter] = useState('')
+  const [showForm, setShowForm] = useState(false)
+  
+  // Form State
+  const [editId, setEditId] = useState<string | null>(null)
+  const [title, setTitle] = useState('')
   const [content, setContent] = useState('')
+  const [namespace, setNamespace] = useState('general')
+  const [sourceUrl, setSourceUrl] = useState('')
+  const [tags, setTags] = useState('general')
   const [isSaving, setIsSaving] = useState(false)
-  const [statusMsg, setStatusMsg] = useState<{ text: string, type: 'success' | 'error' } | null>(null)
 
-  const handleSave = async () => {
-    if (!namespace) {
-      setStatusMsg({ text: 'You must select a namespace before saving.', type: 'error' })
-      return
-    }
-    if (!content.trim()) {
-      setStatusMsg({ text: 'Content cannot be empty.', type: 'error' })
-      return
-    }
-
-    setIsSaving(true)
-    setStatusMsg(null)
-
+  const fetchEntries = async () => {
+    setLoading(true)
     try {
-      const res = await fetch('/api/admin/manual-entry', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ namespace, content })
-      })
-
-      const data = await res.json()
+      const query = new URLSearchParams()
+      if (search) query.append('search', search)
+      if (categoryFilter) query.append('category', categoryFilter)
       
-      if (res.ok && data.success) {
-        setStatusMsg({ text: 'Successfully saved to Pinecone! The bot can now answer using this data.', type: 'success' })
-        setContent('')
-      } else {
-        setStatusMsg({ text: data.error || 'Failed to save data.', type: 'error' })
-      }
-    } catch (err) {
-      setStatusMsg({ text: 'Network error while saving.', type: 'error' })
+      const res = await fetch(`/api/admin/knowledge?${query.toString()}`)
+      const data = await res.json()
+      setEntries(data.entries || [])
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setLoading(false)
     }
+  }
 
-    setIsSaving(false)
+  useEffect(() => {
+    fetchEntries()
+  }, [search, categoryFilter])
+
+  const handleEdit = (entry: any) => {
+    setEditId(entry.id)
+    setTitle(entry.title)
+    setContent(entry.content)
+    setNamespace(entry.category || 'general')
+    setSourceUrl(entry.source_url || '')
+    setTags(entry.page_type || 'general')
+    setShowForm(true)
+  }
+
+  const handleDelete = async (id: string) => {
+    if (!confirm('Are you sure you want to delete this entry? It will also be removed from the Pinecone vector index.')) return
+    try {
+      await fetch(`/api/admin/knowledge/${id}`, { method: 'DELETE' })
+      fetchEntries()
+    } catch (e) {
+      console.error(e)
+    }
+  }
+
+  const handleReEmbed = async (id: string) => {
+    try {
+      await fetch(`/api/admin/knowledge/${id}/re-embed`, { method: 'POST' })
+      alert('Re-embedded successfully!')
+    } catch (e) {
+      console.error(e)
+      alert('Failed to re-embed')
+    }
+  }
+
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setIsSaving(true)
+    try {
+      const payload = { title, content, namespace, source_url: sourceUrl, tags }
+      if (editId) {
+        await fetch(`/api/admin/knowledge/${editId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        })
+      } else {
+        await fetch(`/api/admin/knowledge`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        })
+      }
+      setShowForm(false)
+      setEditId(null)
+      fetchEntries()
+    } catch (err) {
+      console.error(err)
+      alert('Failed to save entry')
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  const resetForm = () => {
+    setEditId(null)
+    setTitle('')
+    setContent('')
+    setNamespace('general')
+    setSourceUrl('')
+    setTags('general')
+    setShowForm(false)
   }
 
   return (
-    <div className="space-y-6 max-w-4xl mx-auto">
-      {/* Header */}
-      <div>
-        <h2 className="font-display font-bold text-white text-xl flex items-center gap-2">
-          <Edit3 className="w-5 h-5 text-cu-gold" />
-          Manual Data Injection
-        </h2>
-        <p className="text-sm text-white/40 font-sans mt-1">
-          Directly insert exact information into the AI's brain. Data entered here bypasses the web crawler and goes live instantly.
-        </p>
-      </div>
-
-      <div className="glass-dark rounded-3xl p-6 md:p-8" style={{ border: '1px solid rgba(255,255,255,0.08)' }}>
-        
-        {statusMsg && (
-          <div className={`mb-6 p-4 rounded-xl flex items-start gap-3 border ${
-            statusMsg.type === 'success' 
-              ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' 
-              : 'bg-red-500/10 border-red-500/20 text-red-400'
-          }`}>
-            {statusMsg.type === 'success' ? <CheckCircle className="w-5 h-5 flex-shrink-0" /> : <AlertTriangle className="w-5 h-5 flex-shrink-0" />}
-            <span className="text-sm font-sans">{statusMsg.text}</span>
-          </div>
-        )}
-
-        <div className="space-y-5">
-          {/* Namespace Selector */}
-          <div>
-            <label className="block text-xs font-bold uppercase tracking-widest text-white/50 mb-2">
-              Target Namespace <span className="text-red-400">*</span>
-            </label>
-            <select
-              value={namespace}
-              onChange={(e) => setNamespace(e.target.value)}
-              className="w-full bg-[#0d1526] border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-cu-gold transition-colors appearance-none font-sans"
-            >
-              <option value="" disabled>-- Select a precise namespace --</option>
-              {NAMESPACES.map(ns => (
-                <option key={ns} value={ns}>{ns}</option>
-              ))}
-            </select>
-            <p className="text-[11px] text-white/30 mt-1.5 font-sans">
-              Compulsory. This prevents data from being lost in the wrong bucket. If you are entering Fee Structure, choose <b>finance</b>.
-            </p>
-          </div>
-
-          {/* Content Textarea */}
-          <div>
-            <label className="block text-xs font-bold uppercase tracking-widest text-white/50 mb-2">
-              Raw Data Content <span className="text-red-400">*</span>
-            </label>
-            <textarea
-              value={content}
-              onChange={(e) => setContent(e.target.value)}
-              placeholder="E.g., The exact per-semester fee for BS Nursing is Rs. 85,000. Students scoring above 80% are eligible for a 20% merit scholarship..."
-              className="w-full min-h-[300px] bg-[#0d1526] border border-white/10 rounded-xl p-5 text-sm text-white leading-relaxed focus:outline-none focus:border-cu-gold transition-colors resize-y font-sans"
+    <div className="space-y-6">
+      {/* Action Bar */}
+      <div className="flex flex-col sm:flex-row justify-between gap-4 bg-[#141414] p-4 rounded-xl border border-gray-800">
+        <div className="flex gap-2 flex-1">
+          <div className="relative flex-1 max-w-sm">
+            <Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-500" />
+            <input
+              type="text"
+              placeholder="Search knowledge..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full pl-9 pr-4 py-2 bg-gray-900 border border-gray-800 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
             />
           </div>
-
-          {/* Save Button */}
-          <div className="pt-2">
-            <button
-              onClick={handleSave}
-              disabled={isSaving || !namespace || !content.trim()}
-              className="flex items-center justify-center gap-2 w-full sm:w-auto px-8 py-3.5 rounded-xl font-bold font-display text-sm transition-all shadow-lg"
-              style={{
-                background: (!namespace || !content.trim()) ? 'rgba(255,255,255,0.05)' : isSaving ? 'rgba(201,162,39,0.5)' : '#c9a227',
-                color: (!namespace || !content.trim()) ? 'rgba(255,255,255,0.3)' : '#080d1a',
-                cursor: (!namespace || !content.trim() || isSaving) ? 'not-allowed' : 'pointer',
-              }}
-            >
-              {isSaving ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
-              {isSaving ? 'Injecting into Pinecone...' : 'Save & Inject Live Data'}
-            </button>
-          </div>
+          <select 
+            value={categoryFilter}
+            onChange={(e) => setCategoryFilter(e.target.value)}
+            className="bg-gray-900 border border-gray-800 rounded-lg px-4 py-2 text-sm outline-none"
+          >
+            <option value="">All Categories</option>
+            <option value="general">General</option>
+            <option value="admissions">Admissions</option>
+            <option value="faculty">Faculty</option>
+            <option value="dept-cs">CS & IT</option>
+            <option value="finance">Finance</option>
+          </select>
         </div>
+        <button 
+          onClick={() => { resetForm(); setShowForm(true) }}
+          className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium transition-colors"
+        >
+          <Plus className="w-4 h-4" /> Add Entry
+        </button>
+      </div>
+
+      {/* Editor Form */}
+      {showForm && (
+        <div className="bg-[#141414] border border-blue-500/30 rounded-xl p-6 shadow-[0_0_20px_rgba(37,99,235,0.05)]">
+          <h3 className="text-lg font-semibold mb-4">{editId ? 'Edit Knowledge Entry' : 'New Knowledge Entry'}</h3>
+          <form onSubmit={handleSave} className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm text-gray-400 mb-1">Title</label>
+                <input required type="text" value={title} onChange={e => setTitle(e.target.value)} className="w-full bg-gray-900 border border-gray-800 rounded-lg px-4 py-2" />
+              </div>
+              <div>
+                <label className="block text-sm text-gray-400 mb-1">Category / Namespace</label>
+                <select required value={namespace} onChange={e => setNamespace(e.target.value)} className="w-full bg-gray-900 border border-gray-800 rounded-lg px-4 py-2">
+                  <option value="general">General</option>
+                  <option value="admissions">Admissions</option>
+                  <option value="faculty">Faculty</option>
+                  <option value="dept-cs">CS & IT</option>
+                  <option value="finance">Finance</option>
+                  <option value="scholarships">Scholarships</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm text-gray-400 mb-1">Source URL (Optional)</label>
+                <input type="url" value={sourceUrl} onChange={e => setSourceUrl(e.target.value)} className="w-full bg-gray-900 border border-gray-800 rounded-lg px-4 py-2" />
+              </div>
+              <div>
+                <label className="block text-sm text-gray-400 mb-1">Page Type / Tags</label>
+                <input type="text" value={tags} onChange={e => setTags(e.target.value)} placeholder="e.g. policy, notice" className="w-full bg-gray-900 border border-gray-800 rounded-lg px-4 py-2" />
+              </div>
+            </div>
+            
+            <div>
+              <label className="block text-sm text-gray-400 mb-1">Content</label>
+              <textarea 
+                required 
+                value={content} 
+                onChange={e => setContent(e.target.value)} 
+                rows={8}
+                className="w-full bg-gray-900 border border-gray-800 rounded-lg px-4 py-3 font-mono text-sm" 
+              />
+            </div>
+            
+            <div className="flex justify-end gap-3 pt-2">
+              <button type="button" onClick={resetForm} className="px-4 py-2 hover:bg-gray-800 rounded-lg text-sm text-gray-400">Cancel</button>
+              <button type="submit" disabled={isSaving} className="px-6 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm font-medium flex items-center gap-2">
+                {isSaving ? 'Saving & Embedding...' : (editId ? 'Save Changes' : 'Save & Embed')}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* Table */}
+      <div className="bg-[#141414] border border-gray-800 rounded-xl overflow-hidden">
+        <table className="w-full text-sm text-left">
+          <thead className="text-xs text-gray-400 uppercase bg-gray-900/50 border-b border-gray-800">
+            <tr>
+              <th className="px-6 py-4">Title</th>
+              <th className="px-6 py-4">Category</th>
+              <th className="px-6 py-4">Source</th>
+              <th className="px-6 py-4">Updated</th>
+              <th className="px-6 py-4 text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-800/50">
+            {loading ? (
+              <tr><td colSpan={5} className="px-6 py-8 text-center text-gray-500">Loading entries...</td></tr>
+            ) : entries.length === 0 ? (
+              <tr><td colSpan={5} className="px-6 py-8 text-center text-gray-500">No knowledge entries found.</td></tr>
+            ) : (
+              entries.map(entry => (
+                <tr key={entry.id} className="hover:bg-gray-800/20">
+                  <td className="px-6 py-4 font-medium text-gray-200">{entry.title}</td>
+                  <td className="px-6 py-4">
+                    <span className="px-2 py-1 bg-gray-800 rounded-md text-xs text-gray-400 border border-gray-700">
+                      {entry.category || 'general'}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4">
+                    <span className={`px-2 py-1 rounded-md text-xs ${entry.source_type === 'manual' ? 'bg-purple-900/30 text-purple-400 border border-purple-800/50' : 'bg-emerald-900/30 text-emerald-400 border border-emerald-800/50'}`}>
+                      {entry.source_type}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 text-gray-500">{new Date(entry.updated_at).toLocaleDateString()}</td>
+                  <td className="px-6 py-4">
+                    <div className="flex justify-end gap-2">
+                      <button onClick={() => handleReEmbed(entry.id)} title="Regenerate Embedding" className="p-1.5 hover:bg-blue-900/30 text-blue-400 rounded-md transition-colors">
+                        <Layers className="w-4 h-4" />
+                      </button>
+                      <button onClick={() => handleEdit(entry)} className="p-1.5 hover:bg-gray-800 text-gray-400 hover:text-white rounded-md transition-colors">
+                        <Edit2 className="w-4 h-4" />
+                      </button>
+                      <button onClick={() => handleDelete(entry.id)} className="p-1.5 hover:bg-red-900/30 text-red-400 rounded-md transition-colors">
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
       </div>
     </div>
   )

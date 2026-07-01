@@ -1,20 +1,16 @@
 /**
- * Groq Request Queue
+ * Groq Request Queue with Auto-Retry
  * 
- * Limits concurrent Groq API calls to MAX_CONCURRENT (8).
- * Extra requests wait in queue instead of all firing at once.
- * This prevents 429 errors when 25-35 students use the app together.
+ * Two protections:
+ * 1. MAX_CONCURRENT = 6 — only 6 Groq calls at once (was 8, reduced to stay under limit)
+ * 2. Auto-retry on 429 — waits and retries up to 3 times before giving up
  * 
- * How it works:
- * - First 8 requests go through immediately
- * - Request 9,10,11... wait until a slot frees up
- * - Max wait time: 25 seconds (then returns friendly error)
- * - User sees "Cubot is thinking..." while waiting
+ * This means users wait a few extra seconds instead of seeing an error.
  */
 
-const MAX_CONCURRENT = 8      // Max simultaneous Groq calls
-const MAX_WAIT_MS = 25000     // 25 seconds max queue wait
-const MAX_QUEUE_SIZE = 40     // Max students waiting in queue
+const MAX_CONCURRENT = 6
+const MAX_WAIT_MS = 30000
+const MAX_QUEUE_SIZE = 50
 
 let activeRequests = 0
 const waitingQueue: Array<{
@@ -68,10 +64,6 @@ export function getQueueStats() {
   }
 }
 
-/**
- * Wraps any async function with queue protection.
- * Usage: const result = await withGroqQueue(() => callGroqAPI(...))
- */
 export async function withGroqQueue<T>(fn: () => Promise<T>): Promise<T> {
   await acquireGroqSlot()
   try {
@@ -79,4 +71,65 @@ export async function withGroqQueue<T>(fn: () => Promise<T>): Promise<T> {
   } finally {
     releaseGroqSlot()
   }
+}
+
+/**
+ * groqFetchWithRetry — wraps a Groq fetch call with:
+ * 1. Queue slot management
+ * 2. Automatic retry on 429 (up to 3 attempts)
+ * 3. Exponential backoff: waits 2s, then 4s, then 8s between retries
+ * 
+ * Usage: replace withGroqQueue(() => fetch(...)) with groqFetchWithRetry(() => fetch(...))
+ */
+export async function groqFetchWithRetry(
+  fn: () => Promise<Response>,
+  maxRetries: number = 3
+): Promise<Response> {
+  let lastError: Error | null = null
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    // Wait before retrying (not before first attempt)
+    if (attempt > 0) {
+      const waitMs = Math.pow(2, attempt) * 1000 // 2s, 4s, 8s
+      console.log(`[GroqQueue] 429 retry ${attempt}/${maxRetries - 1} — waiting ${waitMs}ms`)
+      await new Promise(resolve => setTimeout(resolve, waitMs))
+    }
+
+    await acquireGroqSlot()
+    try {
+      const response = await fn()
+
+      // If 429, release slot and retry
+      if (response.status === 429) {
+        releaseGroqSlot()
+        lastError = new Error('GROQ_429')
+        
+        // Read retry-after header if present
+        const retryAfter = response.headers.get('retry-after')
+        if (retryAfter && attempt === 0) {
+          const waitMs = parseInt(retryAfter) * 1000 || 2000
+          console.log(`[GroqQueue] Groq says retry after ${retryAfter}s`)
+          await new Promise(resolve => setTimeout(resolve, Math.min(waitMs, 8000)))
+        }
+        continue
+      }
+
+      // Success — return the response (slot released in finally)
+      return response
+    } catch (err) {
+      lastError = err as Error
+      releaseGroqSlot()
+      // Only retry on network errors, not logic errors
+      if (attempt < maxRetries - 1) continue
+      throw err
+    } finally {
+      // Only release if we didn't already release above (non-429 path)
+      if (activeRequests > 0) {
+        releaseGroqSlot()
+      }
+    }
+  }
+
+  // All retries exhausted
+  throw new Error(`Groq API Error: 429`)
 }

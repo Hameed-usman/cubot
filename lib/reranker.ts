@@ -1,5 +1,5 @@
 import { RankedChunk, PageType } from '@/types'
-import { withGroqQueue } from './groq-queue'
+import { groqFetchWithRetry } from './groq-queue'
 
 /**
  * Enterprise Reranker v2 — Heuristic Pre-filter + LLM Cross-encoder
@@ -226,7 +226,7 @@ Scoring criteria:
 Return JSON object only:`
 
   try {
-    const response = await withGroqQueue(() =>
+    const response = await groqFetchWithRetry(() =>
       fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
         headers: {

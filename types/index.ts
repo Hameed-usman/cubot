@@ -232,3 +232,85 @@ export interface DbFeedbackLog {
   feedback: string
   created_at: Date
 }
+
+// ─── Dashboard Analytics ──────────────────────────────────────────
+
+export interface KnowledgeAnalyticsData {
+  overview: {
+    totalEntries: number
+    totalChunks: number
+    totalCategories: number
+    totalNamespaces: number
+    totalVectors: number
+  }
+  categoryBreakdown: Array<{
+    category: string
+    entry_count: number
+    chunk_count: number
+    last_updated: string
+  }>
+  namespaces: Array<{
+    namespace: string
+    vector_count: number
+    health: string
+  }>
+}
+
+export interface ConversationAnalyticsData {
+  metrics: {
+    today: number
+    thisWeek: number
+    thisMonth: number
+    totalUsers: number
+    totalMessages: number
+  }
+  topQueries: Array<{ query: string; count: number }>
+  languages: Array<{ language: string; count: number }>
+  intents: Array<{ intent: string; count: number }>
+  volume: Array<{ date: string; count: number }>
+  confidenceDist: Array<{ confidence: string; count: number }>
+  stats: {
+    avg_retrieval: number
+    avg_total: number
+    cache_hit_rate: number
+  }
+  noDataRate: {
+    total: number
+    no_data_count: number
+  }
+}
+
+export interface SystemHealthData {
+  database: { status: string; details: string }
+  redis: { status: string; details: string }
+  pinecone: { status: string; details: string }
+  embedding: { status: string; details: string }
+  crawlers: { status: string; details: string }
+}
+
+export interface OrphanDetectionResult {
+  orphansInDb: any[]
+  orphansInPinecone: string[]
+  summary: {
+    dbTotal: number
+    pineconeTotal: number
+    dbOrphansCount: number
+    pineconeOrphansCount: number
+  }
+}
+
+export interface KnowledgeSearchResult {
+  success: boolean
+  query: string
+  pipeline: {
+    retrieval_ms: number
+    rerank_ms: number
+    total_ms: number
+  }
+  results: Array<{
+    id: string
+    score: number
+    rerankScore: number
+    metadata: any
+  }>
+}

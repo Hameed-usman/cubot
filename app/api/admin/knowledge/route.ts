@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireAdminAuth } from '@/lib/adminAuth'
 import sql from '@/lib/db'
 import { v4 as uuidv4 } from 'uuid'
+import { createHash } from 'crypto'
+import { embedText } from '@/lib/embeddings'
+import { pineconeIndex } from '@/lib/pinecone'
 
 export const dynamic = 'force-dynamic'
 
@@ -10,15 +13,29 @@ export async function GET(req: NextRequest) {
     const authRes = await requireAdminAuth(req)
     if (authRes) return authRes
 
-    const limit = parseInt(req.nextUrl.searchParams.get('limit') || '50', 10)
-    const offset = parseInt(req.nextUrl.searchParams.get('offset') || '0', 10)
+    const url = new URL(req.url)
+    const limit = parseInt(url.searchParams.get('limit') || '50', 10)
+    const offset = parseInt(url.searchParams.get('offset') || '0', 10)
+    const search = url.searchParams.get('search') || ''
+    const sourceType = url.searchParams.get('source_type') || ''
+    const category = url.searchParams.get('category') || ''
 
-    const entries = await sql`
-      SELECT id, title, content, category, department, language, source_type, created_at, updated_at
-      FROM knowledge_entries
-      ORDER BY created_at DESC
-      LIMIT ${limit} OFFSET ${offset}
-    `
+    // Dynamic query building
+    let query = sql`SELECT id, title, content, category, source_type, source_url, created_at, updated_at FROM knowledge_entries WHERE 1=1`
+    
+    if (search) {
+      query = sql`${query} AND (title ILIKE ${'%' + search + '%'} OR content ILIKE ${'%' + search + '%'})`
+    }
+    if (sourceType) {
+      query = sql`${query} AND source_type = ${sourceType}`
+    }
+    if (category) {
+      query = sql`${query} AND category = ${category}`
+    }
+
+    query = sql`${query} ORDER BY updated_at DESC LIMIT ${limit} OFFSET ${offset}`
+
+    const entries = await query
 
     return NextResponse.json({ entries })
   } catch (err: any) {
@@ -33,37 +50,62 @@ export async function POST(req: NextRequest) {
     if (authRes) return authRes
 
     const body = await req.json()
-    const { title, content, department, language, source_type } = body
+    const { title, content, namespace, source_url, tags } = body
 
-    if (!title || !content) {
-      return NextResponse.json({ error: 'Title and content are required' }, { status: 400 })
+    if (!title || !content || !namespace) {
+      return NextResponse.json({ error: 'Title, content, and namespace are required' }, { status: 400 })
     }
 
     const id = uuidv4()
-    
-    // We set 'category' to department if not provided, for schema compatibility
-    const cat = department || 'general'
-    const lang = language || 'en'
-    const stype = source_type || 'manual'
+    const contentHash = createHash('sha256').update(content).digest('hex')
+    const stype = 'manual'
+    const pageType = tags || 'general'
 
-    const entries = await sql`
-      INSERT INTO knowledge_entries (id, title, content, category, department, language, source_type)
-      VALUES (${id}, ${title}, ${content}, ${cat}, ${department || null}, ${lang}, ${stype})
-      RETURNING id, title, content, category, department, language, source_type, created_at
-    `
-
-    // Wait, the prompt says "sets embedding_status to 'pending'"
-    // The schema does not have embedding_status on knowledge_entries natively, but we can assume it's part of a different logic or we can add it if needed.
-    // The prompt: "inserts into knowledge_entries, sets embedding_status to 'pending'"
-    // I will add an ALTER TABLE in the SQL if missing, or just execute it directly.
+    // 1. Generate embedding
+    let embedding: number[]
     try {
-      await sql`ALTER TABLE knowledge_entries ADD COLUMN IF NOT EXISTS embedding_status TEXT DEFAULT 'pending'`
-      await sql`UPDATE knowledge_entries SET embedding_status = 'pending' WHERE id = ${id}`
-    } catch(e) {
-      // Ignore if table schema couldn't be altered here easily, though it should work.
+      embedding = await embedText(content)
+    } catch (err: any) {
+      console.error('[Knowledge POST] Embed error:', err)
+      return NextResponse.json({ error: 'Failed to generate embedding' }, { status: 500 })
     }
 
-    return NextResponse.json({ entry: entries[0] })
+    // 2. Insert into PostgreSQL
+    const entries = await sql`
+      INSERT INTO knowledge_entries (id, title, content, category, source_url, source_type, page_type, content_hash, search_vector)
+      VALUES (
+        ${id}, ${title}, ${content}, ${namespace}, ${source_url || null}, ${stype}, ${pageType}, ${contentHash},
+        setweight(to_tsvector('english', COALESCE(${title}, '')), 'A') ||
+        setweight(to_tsvector('english', COALESCE(${namespace}, '')), 'B') ||
+        setweight(to_tsvector('english', COALESCE(${content}, '')), 'C')
+      )
+      RETURNING id, title, content, category, source_type, created_at
+    `
+
+    // 3. Upsert into Pinecone
+    const index = pineconeIndex.get()
+    if (index) {
+      await index.namespace(namespace).upsert([{
+        id,
+        values: embedding,
+        metadata: {
+          title,
+          category: namespace,
+          text: content,
+          content,
+          sourceUrl: source_url || 'manual_entry',
+          namespace,
+          sourceType: stype,
+          pageType: pageType,
+          created_by: 'admin',
+          created_at: new Date().toISOString()
+        }
+      }])
+    } else {
+      console.warn('[Knowledge POST] Pinecone index not available.')
+    }
+
+    return NextResponse.json({ success: true, entry: entries[0] })
   } catch (err: any) {
     console.error('Knowledge POST error:', err.message)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })

@@ -5,7 +5,7 @@ import { rerank } from './reranker'
 import { AppError } from './errors'
 import { getCachedResult, setCachedResult, CachedRAGResult } from './query-cache'
 import sql from './db'
-import { withGroqQueue } from './groq-queue'
+import { groqFetchWithRetry } from './groq-queue'
 
 // We use the standard ReadableStream and TransformStream which are global in Next.js/Node 18+
 
@@ -65,7 +65,7 @@ async function logQuery(params: {
         ${params.cacheHit || false}
       )
     `
-    
+
     await sql`
       INSERT INTO retrieval_logs (
         id, query, intent, confidence, response_length, 
@@ -85,7 +85,7 @@ async function logQuery(params: {
           ) VALUES (
             ${params.id}, ${chunk.id}, ${chunk.score || 0}, ${chunk.metadata?.sourceUrl || ''}
           )
-        `.catch(() => {})
+        `.catch(() => { })
       }
     }
   } catch (err) {
@@ -214,7 +214,7 @@ New Message: ${message}
 Standalone Search Query:`
 
   try {
-    const response = await withGroqQueue(() =>
+    const response = await groqFetchWithRetry(() =>
       fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
         headers: {
@@ -295,7 +295,7 @@ async function retrieveWithFallback(
   intent: string
 ): Promise<RetrievalAttempt> {
   const apiKey = process.env.GROQ_API_KEY || ''
-  
+
   // ATTEMPT 1: High-Precision Semantic Hybrid
   console.log(`[RAG] Attempt 1: High-Precision Hybrid for "${query}"`)
   const attempt1 = await hybridRetrieve(query, 15, { expandQueries: false })
@@ -307,7 +307,7 @@ async function retrieveWithFallback(
   console.log('[RAG] Attempt 1 low confidence. Attempting Stage 2: Synonym Expansion.')
   const expandedQuery = expandSynonyms(query)
   const attempt2 = await hybridRetrieve(expandedQuery, 15, { expandQueries: true })
-  
+
   if (attempt2.confidence !== 'no_data' && attempt2.chunks.length > 0) {
     // Merge chunks from attempt1 and attempt2 to maximize recall
     if (attempt1.chunks.length > 0) {
@@ -323,7 +323,7 @@ async function retrieveWithFallback(
   // ATTEMPT 3: Broad Semantic Relaxation (Intent-aware)
   let attempt3: RetrievalAttempt = { chunks: [], citations: [], confidence: 'no_data' }
   const isAdmissionsRelated = /admission|apply|enroll|eligib|entry test|fee|scholarship/i.test(query) || intent.includes('admission')
-  
+
   if (isAdmissionsRelated) {
     console.log('[RAG] Attempt 2 low confidence. Attempting Stage 3: Admissions Broad Search.')
     const broadQuery = `${query} details requirements process`
@@ -335,7 +335,7 @@ async function retrieveWithFallback(
         attempt3.chunks.push(...extra)
       }
       if (attempt3.confidence === 'high' || (attempt3.confidence === 'medium' && attempt3.chunks.length >= 3)) {
-         return attempt3
+        return attempt3
       }
     }
   } else {
@@ -345,13 +345,13 @@ async function retrieveWithFallback(
   // ATTEMPT 4: Global Namespace Brute-force Recall Recovery (Issue 3)
   console.log('[RAG] Confidence still low. Attempting Stage 4: Global Namespace Brute-force.')
   const attempt4 = await hybridRetrieve(query, 50, { expandQueries: true, globalNamespaceOnly: true })
-  
+
   if (attempt4.chunks.length > 0) {
-     const bestSoFar = attempt3.chunks.length > 0 ? attempt3 : (attempt2.chunks.length > 0 ? attempt2 : attempt1)
-     const seen = new Set(attempt4.chunks.map(c => c.id))
-     const extra = bestSoFar.chunks.filter(c => !seen.has(c.id))
-     attempt4.chunks.push(...extra)
-     return attempt4
+    const bestSoFar = attempt3.chunks.length > 0 ? attempt3 : (attempt2.chunks.length > 0 ? attempt2 : attempt1)
+    const seen = new Set(attempt4.chunks.map(c => c.id))
+    const extra = bestSoFar.chunks.filter(c => !seen.has(c.id))
+    attempt4.chunks.push(...extra)
+    return attempt4
   }
 
   // Return the best result we found across all attempts
@@ -445,7 +445,7 @@ export async function runRAGPipeline(
 
   // ── Build context (token-budgeted + deduplicated) ───────────────────────────
   const knowledgeContext = buildKnowledgeContext(rerankedChunks)
-  
+
   // Debug: log what chunks are actually being sent to the LLM
   console.log(`[RAG] ┌─ Context chunks passed to LLM (${rerankedChunks.length} total, confidence: ${confidence}) ──`)
   rerankedChunks.forEach((c, i) => {
@@ -512,12 +512,12 @@ Answer (${lang === 'urdu' ? 'URDU ONLY' : 'ENGLISH ONLY'}, MUST BE VALID JSON):`
 📍 Dalazak Road, Peshawar
 
 They'll be able to give you the most up-to-date answer.`;
-    
+
     // Log unanswered query
     sql`
       INSERT INTO unanswered_questions (question_text, language, persona, tier_reached)
       VALUES (${message}, ${lang}, ${intent}, 'tier3')
-    `.catch(() => {});
+    `.catch(() => { });
 
     return {
       content: fallbackMessage,
@@ -529,97 +529,97 @@ They'll be able to give you the most up-to-date answer.`;
     }
   }
 
-    // ── Groq API call ───────────────────────────────────────────────────────────
-    try {
-      const response = await withGroqQueue(() =>
-        fetch('https://api.groq.com/openai/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${apiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: 'llama-3.3-70b-versatile',
-            messages: [{ role: 'user', content: prompt }],
-            temperature: 0.15,
-            max_tokens: 1200,
-            response_format: { type: 'json_object' },
-            stream: false, // Explicitly false for the sync version
-          }),
-          signal: AbortSignal.timeout(30000),
-        })
-      )
+  // ── Groq API call ───────────────────────────────────────────────────────────
+  try {
+    const response = await groqFetchWithRetry(() =>
+      fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'llama-3.3-70b-versatile',
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0.15,
+          max_tokens: 1200,
+          response_format: { type: 'json_object' },
+          stream: false, // Explicitly false for the sync version
+        }),
+        signal: AbortSignal.timeout(30000),
+      })
+    )
 
-      if (!response.ok) {
-        console.error(`[Groq] API Error: ${response.status} ${response.statusText}`)
-        throw new AppError('Service unavailable', response.status, 'API_ERROR')
-      }
-
-      const data = await response.json()
-      const contentStr = data.choices?.[0]?.message?.content || '{}'
-
-      let parsedContent = ''
-      let parsedSuggestions: string[] = []
-
-      try {
-        const parsed = JSON.parse(contentStr)
-        parsedContent = parsed.response || ''
-        parsedSuggestions = Array.isArray(parsed.suggestions) ? parsed.suggestions : []
-      } catch (parseErr) {
-        console.error('[Groq] JSON Parse Error:', parseErr)
-        parsedContent = contentStr
-      }
-
-      const result: RAGResult = {
-        content: parsedContent || (lang === 'urdu'
-          ? 'معذرت، ابھی جواب دینے میں دشواری ہو رہی ہے۔ دوبارہ کوشش کریں۔'
-          : 'I\'m having trouble responding right now. Please try again.'),
-        citations,
-        confidence,
-        suggestions: parsedSuggestions,
-        cached: false,
-        retrievalMs,
-      }
-
-      // ── Log analytics ────────────────────────────────────────────────────────
-      const totalMs = Date.now() - startMs
-      logQuery({
-        id: uuidv4(),
-        query: message,
-        intent,
-        confidence,
-        responseLength: result.content.length,
-        retrievalMs,
-        totalMs,
-        cacheHit: false,
-        chunks: rerankedChunks,
-      }).catch(() => {})
-
-      // Cache successful high/medium confidence results
-      const isNegativeResponse = /don't have info|don't know|not found|معذرت|پاس معلومات نہیں|تصدیق شدہ معلومات نہیں/i.test(parsedContent)
-      if (parsedContent && !isNegativeResponse) {
-        const cachePayload: CachedRAGResult = {
-          content: result.content,
-          citations: result.citations,
-          confidence: result.confidence,
-          suggestions: result.suggestions,
-          cachedAt: Date.now(),
-        }
-        setCachedResult(message, cachePayload, intent).catch(() => {})
-      }
-
-      return result
-    } catch (error: any) {
-      console.error('[Groq] Error:', error)
-      return {
-        content: lang === 'urdu'
-          ? 'مجھے ابھی کنیکٹ کرنے میں دشواری ہو رہی ہے۔ براہ کرم تھوڑی دیر بعد دوبارہ کوشش کریں۔'
-          : 'I\'m having trouble connecting right now. Please try again in a moment.',
-        citations: [],
-        confidence: 'no_data',
-        suggestions: [],
-      }
+    if (!response.ok) {
+      console.error(`[Groq] API Error: ${response.status} ${response.statusText}`)
+      throw new AppError('Service unavailable', response.status, 'API_ERROR')
     }
+
+    const data = await response.json()
+    const contentStr = data.choices?.[0]?.message?.content || '{}'
+
+    let parsedContent = ''
+    let parsedSuggestions: string[] = []
+
+    try {
+      const parsed = JSON.parse(contentStr)
+      parsedContent = parsed.response || ''
+      parsedSuggestions = Array.isArray(parsed.suggestions) ? parsed.suggestions : []
+    } catch (parseErr) {
+      console.error('[Groq] JSON Parse Error:', parseErr)
+      parsedContent = contentStr
+    }
+
+    const result: RAGResult = {
+      content: parsedContent || (lang === 'urdu'
+        ? 'معذرت، ابھی جواب دینے میں دشواری ہو رہی ہے۔ دوبارہ کوشش کریں۔'
+        : 'I\'m having trouble responding right now. Please try again.'),
+      citations,
+      confidence,
+      suggestions: parsedSuggestions,
+      cached: false,
+      retrievalMs,
+    }
+
+    // ── Log analytics ────────────────────────────────────────────────────────
+    const totalMs = Date.now() - startMs
+    logQuery({
+      id: uuidv4(),
+      query: message,
+      intent,
+      confidence,
+      responseLength: result.content.length,
+      retrievalMs,
+      totalMs,
+      cacheHit: false,
+      chunks: rerankedChunks,
+    }).catch(() => { })
+
+    // Cache successful high/medium confidence results
+    const isNegativeResponse = /don't have info|don't know|not found|معذرت|پاس معلومات نہیں|تصدیق شدہ معلومات نہیں/i.test(parsedContent)
+    if (parsedContent && !isNegativeResponse) {
+      const cachePayload: CachedRAGResult = {
+        content: result.content,
+        citations: result.citations,
+        confidence: result.confidence,
+        suggestions: result.suggestions,
+        cachedAt: Date.now(),
+      }
+      setCachedResult(message, cachePayload, intent).catch(() => { })
+    }
+
+    return result
+  } catch (error: any) {
+    console.error('[Groq] Error:', error)
+    return {
+      content: lang === 'urdu'
+        ? 'مجھے ابھی کنیکٹ کرنے میں دشواری ہو رہی ہے۔ براہ کرم تھوڑی دیر بعد دوبارہ کوشش کریں۔'
+        : 'I\'m having trouble connecting right now. Please try again in a moment.',
+      citations: [],
+      confidence: 'no_data',
+      suggestions: [],
+    }
+  }
 }
 
 /**
@@ -685,12 +685,12 @@ export async function runStreamingRAGPipeline(
 📍 Dalazak Road, Peshawar
 
 They'll be able to give you the most up-to-date answer.`;
-    
+
     return new ReadableStream({
       start(controller) {
         controller.enqueue(new TextEncoder().encode(fallbackMessage));
         controller.enqueue(new TextEncoder().encode('\n\n[METADATA]\n{"suggestions": ["How to apply?", "What are the contact details?"]}'));
-        
+
         // Log unanswered query
         if (request.sessionId) {
           sql`
@@ -762,7 +762,7 @@ User question: ${message}
 Answer (${lang === 'urdu' ? 'URDU ONLY' : 'ENGLISH ONLY'}):`
 
   // ── 3. Start Groq Stream ────────────────────────────────────────────────────
-  const response = await withGroqQueue(() =>
+  const response = await groqFetchWithRetry(() =>
     fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -825,7 +825,7 @@ Answer (${lang === 'urdu' ? 'URDU ONLY' : 'ENGLISH ONLY'}):`
 
         // ── End of stream processing ──────────────────────────────────────────
         const totalMs = Date.now() - startMs
-        
+
         // Extract suggestions and content for logging
         const parts = fullResponseText.split('[METADATA]')
         const content = parts[0].trim()
@@ -833,7 +833,7 @@ Answer (${lang === 'urdu' ? 'URDU ONLY' : 'ENGLISH ONLY'}):`
         if (parts.length > 1) {
           try {
             suggestions = JSON.parse(parts[1].trim()).suggestions || []
-          } catch {}
+          } catch { }
         }
 
         logQuery({
@@ -846,11 +846,11 @@ Answer (${lang === 'urdu' ? 'URDU ONLY' : 'ENGLISH ONLY'}):`
           totalMs,
           cacheHit: false,
           chunks: rerankedChunks
-        }).catch(() => {})
+        }).catch(() => { })
 
         // Cache the result ONLY if it's high quality and actually contains info
         const isNegativeResponse = /don't have info|don't know|not found|معذرت|پاس معلومات نہیں|تصدیق شدہ معلومات نہیں/i.test(content)
-        
+
         if (content && !isNegativeResponse) {
           setCachedResult(message, {
             content,
@@ -858,7 +858,7 @@ Answer (${lang === 'urdu' ? 'URDU ONLY' : 'ENGLISH ONLY'}):`
             confidence,
             suggestions,
             cachedAt: Date.now()
-          }, intent).catch(() => {})
+          }, intent).catch(() => { })
         }
 
         // --- PHASE 5: Conversation Logging ---
