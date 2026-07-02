@@ -16,14 +16,22 @@ export async function GET(req: NextRequest) {
     const totalUsers = await sql`SELECT COUNT(DISTINCT session_id) as count FROM conversations`
     const totalMessages = await sql`SELECT COUNT(*) as count FROM conversations`
 
-    // Most Asked
+    // Most Asked (Trends)
     const mostAsked = await sql`
-      SELECT query, COUNT(*) as count
-      FROM retrieval_logs
+      SELECT user_message as query, COUNT(*) as count
+      FROM conversations
       WHERE created_at >= NOW() - INTERVAL '30 days'
-      GROUP BY query
+      GROUP BY user_message
       ORDER BY count DESC
       LIMIT 10
+    `
+
+    // Live Feed (Latest Questions)
+    const liveFeed = await sql`
+      SELECT id, session_id, user_message, bot_response, language, created_at 
+      FROM conversations 
+      ORDER BY created_at DESC 
+      LIMIT 50
     `
 
     // Language Distribution
@@ -86,6 +94,7 @@ export async function GET(req: NextRequest) {
         totalMessages: Number(totalMessages[0]?.count) || 0,
       },
       topQueries: mostAsked,
+      liveFeed: liveFeed,
       languages,
       intents,
       volume,

@@ -13,6 +13,14 @@ interface ConversationData {
     totalMessages: number
   }
   topQueries: Array<{ query: string; count: number }>
+  liveFeed: Array<{
+    id: string;
+    session_id: string;
+    user_message: string;
+    bot_response: string;
+    language: string;
+    created_at: string;
+  }>
   languages: Array<{ language: string; count: number }>
   intents: Array<{ intent: string; count: number }>
   volume: Array<{ date: string; count: number }>
@@ -269,6 +277,55 @@ export default function ConversationAnalyticsTab() {
               )}
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* Live Conversation Feed */}
+      <div className="bg-[#0F0F13] border border-white/5 rounded-2xl p-6 shadow-xl overflow-hidden mt-6">
+        <h4 className="text-lg font-semibold text-gray-100 mb-4 flex items-center gap-2">
+          <MessageSquare className="w-5 h-5 text-indigo-400" /> Live Conversation Feed
+        </h4>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm text-left">
+            <thead className="text-xs text-gray-400 uppercase bg-black/40 border-b border-white/10">
+              <tr>
+                <th className="px-4 py-3">Time</th>
+                <th className="px-4 py-3 min-w-[200px]">Student Question</th>
+                <th className="px-4 py-3 min-w-[200px]">Cubot Response</th>
+                <th className="px-4 py-3">Session</th>
+                <th className="px-4 py-3">Lang</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-white/5">
+              {data.liveFeed?.length === 0 ? (
+                <tr><td colSpan={5} className="px-4 py-8 text-center text-gray-500">No conversations yet.</td></tr>
+              ) : (
+                data.liveFeed?.map((chat) => (
+                  <tr key={chat.id} className="hover:bg-white/[0.02] transition-colors">
+                    <td className="px-4 py-3 text-gray-500 whitespace-nowrap">
+                      {new Date(chat.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                    </td>
+                    <td className="px-4 py-3 text-gray-200 font-medium">
+                      <div className="line-clamp-2" title={chat.user_message}>{chat.user_message}</div>
+                    </td>
+                    <td className="px-4 py-3 text-gray-400">
+                      <div className="line-clamp-2" title={chat.bot_response}>{chat.bot_response}</div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className="font-mono text-xs bg-black/40 px-2 py-1 rounded text-gray-500 border border-white/5" title={chat.session_id}>
+                        {chat.session_id.substring(0, 8)}...
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className="text-xs capitalize px-2 py-1 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                        {chat.language || 'en'}
+                      </span>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
     </div>

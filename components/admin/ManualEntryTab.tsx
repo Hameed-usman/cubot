@@ -124,18 +124,24 @@ export default function ManualEntryTab() {
               className="w-full pl-9 pr-4 py-2 bg-gray-900 border border-gray-800 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
             />
           </div>
-          <select 
-            value={categoryFilter}
-            onChange={(e) => setCategoryFilter(e.target.value)}
-            className="bg-gray-900 border border-gray-800 rounded-lg px-4 py-2 text-sm outline-none"
-          >
-            <option value="">All Categories</option>
-            <option value="general">General</option>
-            <option value="admissions">Admissions</option>
-            <option value="faculty">Faculty</option>
-            <option value="dept-cs">CS & IT</option>
-            <option value="finance">Finance</option>
-          </select>
+          <div className="relative w-48">
+            <input
+              type="text"
+              list="filter-namespaces"
+              placeholder="Filter Category..."
+              value={categoryFilter}
+              onChange={(e) => setCategoryFilter(e.target.value)}
+              className="w-full bg-gray-900 border border-gray-800 rounded-lg px-4 py-2 text-sm outline-none"
+            />
+            <datalist id="filter-namespaces">
+              <option value="general" />
+              <option value="admissions" />
+              <option value="faculty" />
+              <option value="dept-cs" />
+              <option value="finance" />
+              <option value="scholarships" />
+            </datalist>
+          </div>
         </div>
         <button 
           onClick={() => { resetForm(); setShowForm(true) }}
@@ -157,14 +163,23 @@ export default function ManualEntryTab() {
               </div>
               <div>
                 <label className="block text-sm text-gray-400 mb-1">Category / Namespace</label>
-                <select required value={namespace} onChange={e => setNamespace(e.target.value)} className="w-full bg-gray-900 border border-gray-800 rounded-lg px-4 py-2">
-                  <option value="general">General</option>
-                  <option value="admissions">Admissions</option>
-                  <option value="faculty">Faculty</option>
-                  <option value="dept-cs">CS & IT</option>
-                  <option value="finance">Finance</option>
-                  <option value="scholarships">Scholarships</option>
-                </select>
+                <input 
+                  required 
+                  type="text" 
+                  list="form-namespaces"
+                  value={namespace} 
+                  onChange={e => setNamespace(e.target.value)} 
+                  className="w-full bg-gray-900 border border-gray-800 rounded-lg px-4 py-2" 
+                  placeholder="Select or type new..."
+                />
+                <datalist id="form-namespaces">
+                  <option value="general" />
+                  <option value="admissions" />
+                  <option value="faculty" />
+                  <option value="dept-cs" />
+                  <option value="finance" />
+                  <option value="scholarships" />
+                </datalist>
               </div>
               <div>
                 <label className="block text-sm text-gray-400 mb-1">Source URL (Optional)</label>
