@@ -74,7 +74,7 @@ export function ChatInput({ onSubmit, isLoading, disabled }: ChatInputProps) {
       </div>
 
       <p className="text-xs text-slate-400 mt-2 text-center">
-        Press Enter to send, Shift+Enter for new line
+        Cubot can make mistakes. Double check important info.
       </p>
     </form>
   )
