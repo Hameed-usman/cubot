@@ -206,10 +206,10 @@ function isDocumentUrl(url: string): boolean {
 async function fetchPageWithChangeDetection(
   url: string,
   lastScrapedAt?: string
-): Promise<{ html: string; status: 'changed' | 'unchanged' | 'failed'; error?: string }> {
+): Promise<{ html: string; text?: string; status: 'changed' | 'unchanged' | 'failed'; error?: string }> {
   const headers: Record<string, string> = {
     'User-Agent': 'Mozilla/5.0 (compatible; CubotCrawler/1.0; +https://cusit.edu.pk/cubot)',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'Accept': 'text/html,application/xhtml+xml,application/xml,application/pdf;q=0.9,*/*;q=0.8',
     'Accept-Language': 'en-US,en;q=0.5',
     'Cache-Control': 'no-cache',
   }
@@ -222,7 +222,7 @@ async function fetchPageWithChangeDetection(
   try {
     const response = await fetch(url, {
       headers,
-      signal: AbortSignal.timeout(20000),
+      signal: AbortSignal.timeout(30000), // PDFs might take longer to download
     })
 
     // 304 = page unchanged since last crawl
@@ -235,6 +235,19 @@ async function fetchPageWithChangeDetection(
     }
 
     const contentType = response.headers.get('content-type') || ''
+    
+    // Handle PDFs
+    if (contentType.includes('application/pdf')) {
+      try {
+        const arrayBuffer = await response.arrayBuffer()
+        const pdfParse = (await import('pdf-parse')).default
+        const data = await pdfParse(Buffer.from(arrayBuffer))
+        return { html: '', text: data.text, status: 'changed' }
+      } catch (err: any) {
+        return { html: '', status: 'failed', error: 'PDF parse error: ' + err.message }
+      }
+    }
+
     if (!contentType.includes('text/html')) {
       return { html: '', status: 'failed', error: 'Non-HTML content' }
     }
@@ -493,7 +506,7 @@ async function processPage(url: string): Promise<PageResult> {
     // Check if we've seen this page before (for incremental crawling)
     const lastScrapedAt = INCREMENTAL ? await getLastScrapedAt(url) : null
 
-    const { html, status, error } = await fetchPageWithChangeDetection(url, lastScrapedAt ?? undefined)
+    const { html, text, status, error } = await fetchPageWithChangeDetection(url, lastScrapedAt ?? undefined)
 
     if (status === 'unchanged') {
       stats.pagesUnchanged++
@@ -504,11 +517,34 @@ async function processPage(url: string): Promise<PageResult> {
       return { url, title: '', content: '', status: 'failed', error }
     }
 
-    if (html.length < 200) {
-      return { url, title: '', content: '', status: 'skipped', error: 'Insufficient HTML (may need JS rendering)' }
-    }
+    let title = ''
+    let content = ''
+    let links: string[] = []
 
-    const { title, content, links } = await extractContent(html, url)
+    if (text !== undefined) {
+      // PDF processing
+      if (text.length < 50) {
+        return { url, title: '', content: '', status: 'skipped', error: 'Insufficient PDF text' }
+      }
+      
+      // Clean up the PDF title from the URL so it's semantically meaningful for Pinecone
+      let rawFilename = url.split('/').pop()?.replace('.pdf', '') || 'PDF Document'
+      rawFilename = decodeURIComponent(rawFilename)
+      // Remove hash prefixes (like 3cce6efe_) and clean up spaces
+      rawFilename = rawFilename.replace(/^[a-f0-9]{8}_/i, '').replace(/\s+/g, ' ').trim()
+      title = `${rawFilename} (PDF)`
+      
+      content = text.replace(/\s+/g, ' ').trim()
+    } else {
+      // HTML processing
+      if (html.length < 200) {
+        return { url, title: '', content: '', status: 'skipped', error: 'Insufficient HTML (may need JS rendering)' }
+      }
+      const res = await extractContent(html, url)
+      title = res.title
+      content = res.content
+      links = res.links
+    }
 
     if (content.length < 50) {
       return { url, title, content, status: 'skipped', error: 'Insufficient content after extraction' }
@@ -723,17 +759,39 @@ export async function scrapeUrlOnce(url: string): Promise<{ success: boolean; ch
 
   try {
     // Fetch the page (no If-Modified-Since for manual syncs — always re-fetch)
-    const { html, status, error } = await fetchPageWithChangeDetection(url)
+    const { html, text, status, error } = await fetchPageWithChangeDetection(url)
 
     if (status === 'failed') {
       throw new Error(error || 'Failed to fetch page')
     }
 
-    if (html.length < 200) {
-      throw new Error('Page returned insufficient HTML (may require JavaScript rendering)')
-    }
+    let title = ''
+    let content = ''
+    let links: string[] = []
 
-    const { title, content, links } = await extractContent(html, url)
+    if (text !== undefined) {
+      // PDF processing
+      if (text.length < 50) {
+        throw new Error('Insufficient PDF text')
+      }
+      
+      // Clean up the PDF title from the URL so it's semantically meaningful for Pinecone
+      let rawFilename = url.split('/').pop()?.replace('.pdf', '') || 'PDF Document'
+      rawFilename = decodeURIComponent(rawFilename)
+      rawFilename = rawFilename.replace(/^[a-f0-9]{8}_/i, '').replace(/\s+/g, ' ').trim()
+      title = `${rawFilename} (PDF)`
+      
+      content = text.replace(/\s+/g, ' ').trim()
+    } else {
+      // HTML processing
+      if (html.length < 200) {
+        throw new Error('Page returned insufficient HTML (may require JavaScript rendering)')
+      }
+      const res = await extractContent(html, url)
+      title = res.title
+      content = res.content
+      links = res.links
+    }
 
     if (content.length < 50) {
       throw new Error('Insufficient text content extracted from page')

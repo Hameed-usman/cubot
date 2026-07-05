@@ -56,56 +56,24 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Title, content, and namespace are required' }, { status: 400 })
     }
 
-    const id = uuidv4()
-    const contentHash = createHash('sha256').update(content).digest('hex')
-    const stype = 'manual'
-    const pageType = tags || 'general'
+    const { upsertKnowledgeChunk } = await import('@/lib/embed-and-store')
+    const result = await upsertKnowledgeChunk({
+      title,
+      content,
+      category: namespace,
+      sourceUrl: source_url || '',
+      sourceType: 'manual',
+      pageType: tags || 'general',
+      forceUpdate: true,
+    })
 
-    // 1. Generate embedding
-    let embedding: number[]
-    try {
-      embedding = await embedText(content)
-    } catch (err: any) {
-      console.error('[Knowledge POST] Embed error:', err)
-      return NextResponse.json({ error: 'Failed to generate embedding' }, { status: 500 })
+    if (!result.success) {
+      return NextResponse.json({ error: 'Failed to create entry' }, { status: 500 })
     }
 
-    // 2. Insert into PostgreSQL
-    const entries = await sql`
-      INSERT INTO knowledge_entries (id, title, content, category, source_url, source_type, page_type, content_hash, search_vector)
-      VALUES (
-        ${id}, ${title}, ${content}, ${namespace}, ${source_url || null}, ${stype}, ${pageType}, ${contentHash},
-        setweight(to_tsvector('english', COALESCE(${title}, '')), 'A') ||
-        setweight(to_tsvector('english', COALESCE(${namespace}, '')), 'B') ||
-        setweight(to_tsvector('english', COALESCE(${content}, '')), 'C')
-      )
-      RETURNING id, title, content, category, source_type, created_at
-    `
+    const entry = await sql`SELECT id, title, content, category, source_type, created_at FROM knowledge_entries WHERE id = ${result.id}`
 
-    // 3. Upsert into Pinecone
-    const index = pineconeIndex.get()
-    if (index) {
-      await index.namespace(namespace).upsert([{
-        id,
-        values: embedding,
-        metadata: {
-          title,
-          category: namespace,
-          text: content,
-          content,
-          sourceUrl: source_url || 'manual_entry',
-          namespace,
-          sourceType: stype,
-          pageType: pageType,
-          created_by: 'admin',
-          created_at: new Date().toISOString()
-        }
-      }])
-    } else {
-      console.warn('[Knowledge POST] Pinecone index not available.')
-    }
-
-    return NextResponse.json({ success: true, entry: entries[0] })
+    return NextResponse.json({ success: true, entry: entry[0] })
   } catch (err: any) {
     console.error('Knowledge POST error:', err.message)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })

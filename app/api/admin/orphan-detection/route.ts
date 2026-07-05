@@ -5,116 +5,140 @@ import { pineconeIndex } from '@/lib/pinecone'
 
 export const dynamic = 'force-dynamic'
 
+/**
+ * GET /api/admin/orphan-detection
+ * Compares Neon knowledge_entries with Pinecone vectors to find:
+ * 1. DB records that have no corresponding Pinecone vector
+ * 2. Pinecone vectors that have no corresponding DB record
+ */
 export async function GET(req: NextRequest) {
   try {
     const authRes = await requireAdminAuth(req)
     if (authRes) return authRes
 
-    // 1. Get all IDs from PostgreSQL
-    const dbEntries = await sql`SELECT id, category FROM knowledge_entries`
-    const dbIds = new Set(dbEntries.map(e => e.id))
-    const dbNamespaces = [...new Set(dbEntries.map(e => e.category || 'general'))]
-
-    const orphansInDb: any[] = []
-    const orphansInPinecone: string[] = []
-
     const index = pineconeIndex.get()
     if (!index) {
-      return NextResponse.json({ error: 'Pinecone not initialized' }, { status: 500 })
+      return NextResponse.json({ error: 'Pinecone not configured' }, { status: 503 })
     }
 
+    // 1. Get all DB records with their vector IDs
+    const dbEntries = await sql`
+      SELECT id, pinecone_vector_id, pinecone_namespace, category
+      FROM knowledge_entries
+      WHERE pinecone_vector_id IS NOT NULL
+    `
+
+    const dbVectorIds = new Set<string>(dbEntries.map((e: any) => e.pinecone_vector_id || e.id))
+    const dbIdSet = new Set<string>(dbEntries.map((e: any) => String(e.id)))
+
+    // 2. Get Pinecone namespace stats
     const stats = await index.describeIndexStats()
-    const namespaces = Object.keys(stats.namespaces || {})
-    
-    // Add any namespaces found in DB that aren't in Pinecone yet (to check if they should be)
-    for (const ns of dbNamespaces) {
-      if (!namespaces.includes(ns)) namespaces.push(ns)
-    }
+    const namespaces = Object.entries(stats.namespaces || {})
 
-    // 2. Get all IDs from Pinecone across all namespaces
-    const pineconeIds = new Set<string>()
+    let pineconeTotal = 0
+    const orphansInPinecone: string[] = []
+    const orphansInDb: Array<{ id: string; category: string }> = []
 
-    for (const ns of namespaces) {
+    // 3. For each namespace, list vectors and cross-reference
+    for (const [ns, nsData] of namespaces) {
+      const nsCount = (nsData as any).recordCount || (nsData as any).vectorCount || 0
+      pineconeTotal += nsCount
+
       try {
-        let paginationToken: string | undefined
-        do {
-          const results: any = await index.namespace(ns).listPaginated({ paginationToken })
-          if (results.vectors) {
-            for (const v of results.vectors) {
-              pineconeIds.add(v.id)
-            }
+        const listResult = await index.namespace(ns).listPaginated({ limit: 100 })
+        const vectorIds = (listResult.vectors || []).map((v: any) => v.id)
+
+        for (const vid of vectorIds) {
+          if (!dbVectorIds.has(vid) && !dbIdSet.has(vid)) {
+            orphansInPinecone.push(vid)
           }
-          paginationToken = results.pagination?.next
-        } while (paginationToken)
+        }
       } catch (e) {
-        console.error(`[OrphanDetection] Error listing namespace ${ns}:`, e)
+        console.error(`[OrphanDetection] Failed to list vectors in namespace "${ns}":`, e)
       }
     }
 
-    // 3. Find Orphans in DB (has DB record, no Pinecone vector)
-    for (const entry of dbEntries) {
-      if (!pineconeIds.has(entry.id)) {
-        orphansInDb.push(entry)
-      }
-    }
+    // 4. DB records missing Pinecone sync
+    const unsyncedEntries = await sql`
+      SELECT id, category, pinecone_vector_id
+      FROM knowledge_entries
+      WHERE pinecone_synced_at IS NULL
+        AND pinecone_vector_id IS NOT NULL
+      LIMIT 100
+    `
 
-    // 4. Find Orphans in Pinecone (has Pinecone vector, no DB record)
-    for (const pid of Array.from(pineconeIds)) {
-      if (!dbIds.has(pid)) {
-        orphansInPinecone.push(pid)
-      }
+    for (const entry of unsyncedEntries) {
+      orphansInDb.push({
+        id: String(entry.id),
+        category: entry.category || 'unknown',
+      })
     }
 
     return NextResponse.json({
+      summary: {
+        dbTotal: dbEntries.length,
+        pineconeTotal,
+        dbOrphansCount: orphansInDb.length,
+        pineconeOrphansCount: orphansInPinecone.length,
+      },
       orphansInDb,
       orphansInPinecone,
-      summary: {
-        dbTotal: dbIds.size,
-        pineconeTotal: pineconeIds.size,
-        dbOrphansCount: orphansInDb.length,
-        pineconeOrphansCount: orphansInPinecone.length
-      }
     })
   } catch (err: any) {
-    console.error('Orphan Detection error:', err.message)
-    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
+    console.error('[OrphanDetection] Error:', err)
+    return NextResponse.json({ error: err.message || 'Internal Server Error' }, { status: 500 })
   }
 }
 
+/**
+ * POST /api/admin/orphan-detection
+ * Take action on detected orphans.
+ * Body: { action: 'delete_from_pinecone' | 'delete_from_db', ids: string[] }
+ */
 export async function POST(req: NextRequest) {
   try {
     const authRes = await requireAdminAuth(req)
     if (authRes) return authRes
 
     const { action, ids } = await req.json()
-    // action: 'delete_from_db' | 'delete_from_pinecone'
 
-    if (action === 'delete_from_db' && Array.isArray(ids) && ids.length > 0) {
-      await sql`DELETE FROM knowledge_entries WHERE id = ANY(${ids})`
-      return NextResponse.json({ success: true, message: `Deleted ${ids.length} records from DB` })
+    if (!action || !Array.isArray(ids)) {
+      return NextResponse.json({ error: 'action and ids are required' }, { status: 400 })
     }
 
-    if (action === 'delete_from_pinecone' && Array.isArray(ids) && ids.length > 0) {
-      const index = pineconeIndex.get()
-      if (!index) return NextResponse.json({ error: 'Pinecone not initialized' }, { status: 500 })
+    const index = pineconeIndex.get()
 
-      // We have to iterate namespaces to delete.
+    if (action === 'delete_from_pinecone' && index) {
       const stats = await index.describeIndexStats()
-      const namespaces = Object.keys(stats.namespaces || {})
+      const namespaceNames = Object.keys(stats.namespaces || {})
 
-      for (const ns of namespaces) {
+      for (const ns of namespaceNames) {
         try {
           await index.namespace(ns).deleteMany(ids)
         } catch (e) {
-          console.error(`[OrphanDetection] Error deleting from namespace ${ns}:`, e)
+          // Ignore errors for namespaces that don't contain these IDs
         }
       }
-      return NextResponse.json({ success: true, message: `Attempted to delete ${ids.length} vectors from Pinecone` })
+
+      return NextResponse.json({
+        success: true,
+        message: `Attempted deletion of ${ids.length} orphan vectors across ${namespaceNames.length} namespaces`,
+      })
     }
 
-    return NextResponse.json({ error: 'Invalid action or IDs' }, { status: 400 })
+    if (action === 'delete_from_db') {
+      if (ids.length > 0) {
+        await sql`DELETE FROM knowledge_entries WHERE id::TEXT = ANY(${ids})`
+      }
+      return NextResponse.json({
+        success: true,
+        message: `Deleted ${ids.length} orphan records from Neon`,
+      })
+    }
+
+    return NextResponse.json({ error: 'Invalid action' }, { status: 400 })
   } catch (err: any) {
-    console.error('Orphan Detection POST error:', err.message)
-    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
+    console.error('[OrphanDetectionPOST] Error:', err)
+    return NextResponse.json({ error: err.message || 'Internal Server Error' }, { status: 500 })
   }
 }

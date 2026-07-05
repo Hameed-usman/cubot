@@ -46,6 +46,7 @@ const PINECONE_TEXT_LIMIT = 6000 // chars — gives reranker full working contex
  * - Routes to correct Pinecone namespace based on category
  */
 export async function upsertKnowledgeChunk(params: {
+  id?: string // Allow passing an ID for explicitly updating a record
   title: string
   content: string
   category: string
@@ -59,13 +60,14 @@ export async function upsertKnowledgeChunk(params: {
   forceUpdate?: boolean
   keywords?: string[]
   sectionName?: string
-}): Promise<{ success: boolean; id: string; skipped?: boolean; error?: unknown }> {
+}): Promise<{ success: boolean; id?: string; skipped?: boolean; error?: string }> {
   const {
+    id: providedId,
     title,
     content,
     category,
     sourceUrl = '',
-    sourceType = 'manual',
+    sourceType = 'scraped',
     pageType = 'general',
     breadcrumb = '',
     chunkIndex = 0,
@@ -76,19 +78,28 @@ export async function upsertKnowledgeChunk(params: {
     sectionName = '',
   } = params
 
-  const contentHash = createHash('md5').update(content).digest('hex')
+  const contentHash = createHash('sha256').update(content).digest('hex')
   const now = new Date().toISOString()
   const namespace = categoryToNamespace(category)
 
   try {
-    // ── Check if this exact chunk already exists (same URL + chunk index) ──────
-    const existing = await sql`
-      SELECT id, content_hash FROM knowledge_entries
-      WHERE source_url = ${sourceUrl}
-        AND chunk_index = ${chunkIndex}
-        AND source_type = ${sourceType}
-      LIMIT 1
-    `
+    let existing: any[] = []
+
+    // ── Check if this chunk already exists ──────
+    if (providedId) {
+      // If explicit ID provided (e.g., PUT request or manual edit), check by ID
+      existing = await sql`SELECT id, content_hash, pinecone_namespace FROM knowledge_entries WHERE id = ${providedId}`
+    } else if (sourceType !== 'manual') {
+      // For scraped/crawled content, sourceUrl + chunkIndex is a unique identifier
+      existing = await sql`
+        SELECT id, content_hash, pinecone_namespace FROM knowledge_entries
+        WHERE source_url = ${sourceUrl}
+          AND chunk_index = ${chunkIndex}
+          AND source_type = ${sourceType}
+        LIMIT 1
+      `
+    }
+    // For sourceType === 'manual' without a providedId, it's always a NEW entry.
 
     let id: string
     let shouldEmbed = true
@@ -106,22 +117,25 @@ export async function upsertKnowledgeChunk(params: {
         return { success: true, id, skipped: true }
       }
 
+      // Content changed → update record (pinecone_vector_id stays the same — it's the same vector slot)
+
       // Content changed → update record
       await sql`
         UPDATE knowledge_entries
-        SET title           = ${title},
-            content         = ${content},
-            category        = ${category},
-            source_url      = ${sourceUrl},
-            source_type     = ${sourceType},
-            page_type       = ${pageType},
-            breadcrumb      = ${breadcrumb},
-            content_hash    = ${contentHash},
-            chunk_index     = ${chunkIndex},
-            total_chunks    = ${totalChunks},
-            parent_page_id  = ${parentPageId ?? null},
-            last_scraped_at = ${now},
-            updated_at      = CURRENT_TIMESTAMP
+        SET title              = ${title},
+            content            = ${content},
+            category           = ${category},
+            source_url         = ${sourceUrl},
+            source_type        = ${sourceType},
+            page_type          = ${pageType},
+            breadcrumb         = ${breadcrumb},
+            content_hash       = ${contentHash},
+            chunk_index        = ${chunkIndex},
+            total_chunks       = ${totalChunks},
+            parent_page_id     = ${parentPageId ?? null},
+            pinecone_namespace  = ${namespace},
+            last_scraped_at    = ${now},
+            updated_at         = CURRENT_TIMESTAMP
         WHERE id = ${id}
       `
       shouldEmbed = true
@@ -133,11 +147,13 @@ export async function upsertKnowledgeChunk(params: {
           id, title, content, category,
           source_url, source_type, page_type, breadcrumb,
           content_hash, chunk_index, total_chunks, parent_page_id,
+          pinecone_vector_id, pinecone_namespace, embedding_model,
           last_scraped_at
         ) VALUES (
           ${id}, ${title}, ${content}, ${category},
           ${sourceUrl}, ${sourceType}, ${pageType}, ${breadcrumb},
           ${contentHash}, ${chunkIndex}, ${totalChunks}, ${parentPageId ?? null},
+          ${id}, ${namespace}, 'gemini-embedding-001',
           ${now}
         )
       `
@@ -170,8 +186,28 @@ export async function upsertKnowledgeChunk(params: {
         if (sectionName) metadata.sectionName = sectionName
         if (keywords.length > 0) metadata.keywords = keywords.join(',')
 
+        // If the namespace changed, delete the old vector to prevent stale duplicates
+        if (existing.length > 0 && existing[0].pinecone_namespace && existing[0].pinecone_namespace !== namespace) {
+          try {
+            await index.namespace(existing[0].pinecone_namespace).deleteOne(id)
+            console.log(`[upsertKnowledgeChunk] Deleted stale vector ${id} from old namespace: ${existing[0].pinecone_namespace}`)
+          } catch (e) {
+            console.error(`[upsertKnowledgeChunk] Failed to delete stale vector ${id} from ${existing[0].pinecone_namespace}:`, e)
+          }
+        }
+
         // Upsert into the correct namespace for better recall at scale
         await index.namespace(namespace).upsert([{ id, values: embedding, metadata }])
+
+        // Record the sync timestamp and confirm the mapping
+        await sql`
+          UPDATE knowledge_entries
+          SET pinecone_vector_id  = ${id},
+              pinecone_namespace   = ${namespace},
+              embedding_model      = 'gemini-embedding-001',
+              pinecone_synced_at   = ${now}
+          WHERE id = ${id}
+        `.catch((e) => console.warn('[upsertKnowledgeChunk] Failed to update sync timestamp:', e))
       } else {
         console.warn('[upsertKnowledgeChunk] Pinecone not available — vector not stored.')
       }
@@ -313,11 +349,13 @@ export async function upsertPageChunks(params: {
             id, title, content, category,
             source_url, source_type, page_type, breadcrumb,
             content_hash, chunk_index, total_chunks, parent_page_id,
+            pinecone_vector_id, pinecone_namespace, embedding_model,
             last_scraped_at
           ) VALUES (
             ${chunk.id}, ${titleWithIndex}, ${chunk.text}, ${shared.category},
             ${shared.sourceUrl}, ${shared.sourceType}, ${shared.pageType}, ${shared.breadcrumb},
             ${hash}, ${chunk.idx}, ${totalChunks}, ${parentPageId},
+            ${chunk.id}, ${namespace}, 'gemini-embedding-001',
             ${now}
           )
         `
@@ -329,19 +367,20 @@ export async function upsertPageChunks(params: {
       } else {
         await sql`
           UPDATE knowledge_entries
-          SET title           = ${titleWithIndex},
-              content         = ${chunk.text},
-              category        = ${shared.category},
-              source_url      = ${shared.sourceUrl},
-              source_type     = ${shared.sourceType},
-              page_type       = ${shared.pageType},
-              breadcrumb      = ${shared.breadcrumb},
-              content_hash    = ${hash},
-              chunk_index     = ${chunk.idx},
-              total_chunks    = ${totalChunks},
-              parent_page_id  = ${parentPageId},
-              last_scraped_at = ${now},
-              updated_at      = CURRENT_TIMESTAMP
+          SET title              = ${titleWithIndex},
+              content            = ${chunk.text},
+              category           = ${shared.category},
+              source_url         = ${shared.sourceUrl},
+              source_type        = ${shared.sourceType},
+              page_type          = ${shared.pageType},
+              breadcrumb         = ${shared.breadcrumb},
+              content_hash       = ${hash},
+              chunk_index        = ${chunk.idx},
+              total_chunks       = ${totalChunks},
+              parent_page_id     = ${parentPageId},
+              pinecone_namespace  = ${namespace},
+              last_scraped_at    = ${now},
+              updated_at         = CURRENT_TIMESTAMP
           WHERE id = ${chunk.id}
         `
       }
@@ -385,6 +424,13 @@ export async function upsertPageChunks(params: {
           const batch = pineconeVectors.slice(i, i + PINECONE_BATCH)
           await index.namespace(namespace).upsert(batch)
         }
+        // Persist sync timestamp for all vectors in this batch
+        const syncedIds = pineconeVectors.map(v => v.id)
+        await sql`
+          UPDATE knowledge_entries
+          SET pinecone_synced_at = ${now}
+          WHERE id::TEXT = ANY(${syncedIds})
+        `.catch(() => {})
         await sql`UPDATE scraped_pages SET pinecone_sync_status = 'synced' WHERE id = ${scrapedPageId}`.catch(() => {})
       } catch (err) {
         console.error('[upsertPageChunks] Pinecone batch upsert error:', err)

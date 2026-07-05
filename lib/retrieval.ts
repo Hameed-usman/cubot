@@ -93,7 +93,7 @@ export function getTargetNamespaces(query: string): string[] {
     namespaces.push('dept-bba')
   if (/pharm/i.test(q)) namespaces.push('dept-pharmacy')
   if (/nurs/i.test(q)) namespaces.push('dept-nursing')
-  if (/program|degree|course|curriculum|syllabus|semester|credit/i.test(q))
+  if (/program|degree|course|curriculum|syllabus|semester|credit|cdc|career development/i.test(q))
     namespaces.push('academic')
   if (/alumni|graduate|former student|gold.?medal|medal.?list|medalist|topper|batch.?20|20\d\d.?batch|convocation|award.?winner|best.?student|distinction|position.?holder|first.?position|second.?position|third.?position/i.test(q))
     namespaces.push('alumni')
@@ -154,6 +154,12 @@ Alternatives:`,
   return [query]
 }
 
+const ALL_NAMESPACES = [
+  'faculty', 'admissions', 'scholarships', 'finance', 'notices',
+  'events', 'policies', 'contact', 'facilities', 'dept-cs',
+  'dept-bba', 'dept-pharmacy', 'dept-nursing', 'academic', 'alumni', 'general'
+]
+
 // ─── Vector Search (Multi-query + Multi-namespace) ─────────────────────────────
 
 async function vectorSearch(queries: string[], topK: number = TOP_K_VECTOR, globalNamespaceOnly: boolean = false): Promise<RankedChunk[]> {
@@ -169,12 +175,12 @@ async function vectorSearch(queries: string[], topK: number = TOP_K_VECTOR, glob
 
     await Promise.all(queries.map(async (query, qi) => {
       const embedding = embeddings[qi]
-      const targetNamespaces = globalNamespaceOnly ? [] : getTargetNamespaces(query)
+      
+      // If globalNamespaceOnly, search ALL namespaces instead of the empty default namespace
+      const targetNamespaces = globalNamespaceOnly ? ALL_NAMESPACES : getTargetNamespaces(query)
 
       // Each namespace gets the FULL topK budget — deduplication handles overlap.
-      // Previously dividing topK by namespace count caused severe recall loss.
       const namespacePromises = targetNamespaces.map(async (ns) => {
-        console.log(`[Retrieval Debug] Sending query to namespace ${ns} with vector length ${embedding.length}`)
         const response = await index.namespace(ns).query({
           vector: embedding,
           topK,
@@ -183,14 +189,17 @@ async function vectorSearch(queries: string[], topK: number = TOP_K_VECTOR, glob
         return response.matches || []
       })
 
-      // Also search without namespace filter for a global catch-all
-      const globalPromise = index.query({
-        vector: embedding,
-        topK: globalNamespaceOnly ? topK : Math.ceil(topK / 2),
-        includeMetadata: true,
-      }).then(r => r.matches || [])
+      // If NOT global, we still do a fallback to the 'general' namespace explicitly
+      // rather than the empty default namespace.
+      const fallbackPromises = !globalNamespaceOnly && !targetNamespaces.includes('general')
+        ? [index.namespace('general').query({
+            vector: embedding,
+            topK: Math.ceil(topK / 2),
+            includeMetadata: true,
+          }).then(r => r.matches || [])]
+        : []
 
-      const allMatchesArrays = await Promise.all([...namespacePromises, globalPromise])
+      const allMatchesArrays = await Promise.all([...namespacePromises, ...fallbackPromises])
 
       for (const matches of allMatchesArrays) {
         for (const match of matches) {
@@ -221,7 +230,11 @@ async function keywordSearch(query: string, topK: number = TOP_K_KEYWORD): Promi
     const sanitized = query.replace(/['\"\\;:]/g, ' ').trim()
     if (!sanitized) return []
 
-    // Use websearch_to_tsquery for phrase matching (e.g. "BSCS 401", "BS Computer Science")
+    // Convert spaces to ' OR ' so websearch_to_tsquery matches ANY keyword instead of ALL.
+    // E.g., "Tell me about CDC" -> "Tell OR me OR about OR CDC" -> "'tell' | 'cdc'"
+    const orQuery = sanitized.split(/\s+/).filter(Boolean).join(' OR ')
+
+    // Use websearch_to_tsquery for phrase matching
     // Falls back to plainto_tsquery on parse failure
     const results = await sql`
       SELECT
@@ -239,7 +252,7 @@ async function keywordSearch(query: string, topK: number = TOP_K_KEYWORD): Promi
         last_scraped_at,
         ts_rank_cd(search_vector, query, 32) AS bm25_score
       FROM knowledge_entries,
-           websearch_to_tsquery('english', ${sanitized}) AS query
+           websearch_to_tsquery('english', ${orQuery}) AS query
       WHERE search_vector @@ query
         AND content_hash IS NOT NULL
       ORDER BY bm25_score DESC
@@ -255,7 +268,7 @@ async function keywordSearch(query: string, topK: number = TOP_K_KEYWORD): Promi
           total_chunks AS "totalChunks", last_scraped_at,
           ts_rank_cd(search_vector, query, 32) AS bm25_score
         FROM knowledge_entries,
-             plainto_tsquery('english', ${sanitized}) AS query
+             plainto_tsquery('english', ${orQuery}) AS query
         WHERE search_vector @@ query
           AND content_hash IS NOT NULL
         ORDER BY bm25_score DESC

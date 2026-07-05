@@ -23,9 +23,14 @@ ALTER TABLE knowledge_entries ADD COLUMN IF NOT EXISTS chunk_index     INTEGER N
 ALTER TABLE knowledge_entries ADD COLUMN IF NOT EXISTS total_chunks    INTEGER NOT NULL DEFAULT 1;
 ALTER TABLE knowledge_entries ADD COLUMN IF NOT EXISTS parent_page_id  UUID;
 ALTER TABLE knowledge_entries ADD COLUMN IF NOT EXISTS search_vector   tsvector;
-ALTER TABLE knowledge_entries ADD COLUMN IF NOT EXISTS last_scraped_at TIMESTAMP WITH TIME ZONE;
-ALTER TABLE knowledge_entries ADD COLUMN IF NOT EXISTS created_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
-ALTER TABLE knowledge_entries ADD COLUMN IF NOT EXISTS updated_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
+ALTER TABLE knowledge_entries ADD COLUMN IF NOT EXISTS last_scraped_at       TIMESTAMP WITH TIME ZONE;
+ALTER TABLE knowledge_entries ADD COLUMN IF NOT EXISTS created_at            TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
+ALTER TABLE knowledge_entries ADD COLUMN IF NOT EXISTS updated_at            TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
+-- Persistent Pinecone mapping — critical for sync, audit, orphan detection, and re-embedding
+ALTER TABLE knowledge_entries ADD COLUMN IF NOT EXISTS pinecone_vector_id    TEXT;
+ALTER TABLE knowledge_entries ADD COLUMN IF NOT EXISTS pinecone_namespace     TEXT;
+ALTER TABLE knowledge_entries ADD COLUMN IF NOT EXISTS embedding_model        TEXT DEFAULT 'gemini-embedding-001';
+ALTER TABLE knowledge_entries ADD COLUMN IF NOT EXISTS pinecone_synced_at     TIMESTAMP WITH TIME ZONE;
 
 
 
