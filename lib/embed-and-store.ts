@@ -216,7 +216,7 @@ export async function upsertKnowledgeChunk(params: {
     return { success: true, id }
   } catch (error) {
     console.error('[upsertKnowledgeChunk] Error:', error)
-    return { success: false, id: '', error }
+    return { success: false, id: '', error: error instanceof Error ? error.message : String(error) }
   }
 }
 

@@ -74,7 +74,7 @@ export function ChatInput({ onSubmit, isLoading, disabled }: ChatInputProps) {
       </div>
 
       <p className="text-xs text-slate-400 mt-2 text-center">
-        Cubot can make mistakes. Double check important info.
+        Cubot can make mistakes. Double check important information.
       </p>
     </form>
   )
