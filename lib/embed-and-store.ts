@@ -251,7 +251,7 @@ export async function upsertPageChunks(params: {
   const totalChunks = chunks.length
   const namespace = categoryToNamespace(shared.category)
   const now = new Date().toISOString()
-  
+
   // Upsert scraped_page
   const contentHash = chunks.length > 0 ? createHash('md5').update(chunks.map(c => c.text).join('')).digest('hex') : ''
   let scrapedPageId = uuidv4()
@@ -306,7 +306,7 @@ export async function upsertPageChunks(params: {
       // Touch timestamp only
       await sql`
         UPDATE knowledge_entries SET last_scraped_at = ${now} WHERE id = ${existing.id}
-      `.catch(() => {})
+      `.catch(() => { })
       skipped++
       continue
     }
@@ -359,11 +359,11 @@ export async function upsertPageChunks(params: {
             ${now}
           )
         `
-        
+
         await sql`
           INSERT INTO document_chunks (scraped_page_id, chunk_index, text_content, embedding_version, pinecone_id)
           VALUES (${scrapedPageId}, ${chunk.idx}, ${chunk.text}, 'gemini-embedding-001', ${chunk.id})
-        `.catch(() => {})
+        `.catch(() => { })
       } else {
         await sql`
           UPDATE knowledge_entries
@@ -430,11 +430,11 @@ export async function upsertPageChunks(params: {
           UPDATE knowledge_entries
           SET pinecone_synced_at = ${now}
           WHERE id::TEXT = ANY(${syncedIds})
-        `.catch(() => {})
-        await sql`UPDATE scraped_pages SET pinecone_sync_status = 'synced' WHERE id = ${scrapedPageId}`.catch(() => {})
+        `.catch(() => { })
+        await sql`UPDATE scraped_pages SET pinecone_sync_status = 'synced' WHERE id = ${scrapedPageId}`.catch(() => { })
       } catch (err) {
         console.error('[upsertPageChunks] Pinecone batch upsert error:', err)
-        await sql`UPDATE scraped_pages SET pinecone_sync_status = 'failed' WHERE id = ${scrapedPageId}`.catch(() => {})
+        await sql`UPDATE scraped_pages SET pinecone_sync_status = 'failed' WHERE id = ${scrapedPageId}`.catch(() => { })
       }
     }
   }
