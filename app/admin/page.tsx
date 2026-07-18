@@ -31,6 +31,7 @@ import VectorExplorerTab from '@/components/admin/VectorExplorerTab'
 import NamespaceExplorerTab from '@/components/admin/NamespaceExplorerTab'
 import URLExplorerTab from '@/components/admin/URLExplorerTab'
 import DataIntegrityTab from '@/components/admin/DataIntegrityTab'
+import DocumentKnowledgeTab from '@/components/admin/DocumentKnowledgeTab'
 
 type TabType =
   | 'knowledge_base'
@@ -52,7 +53,7 @@ interface SidebarGroup {
 
 export default function AdminDashboard() {
   const [activeTab, setActiveTab] = useState<TabType>('knowledge_base')
-  const [subTab, setSubTab] = useState<'manual' | 'scraper'>('manual')
+  const [subTab, setSubTab] = useState<'manual' | 'scraper' | 'pdf'>('manual')
 
   const sidebarGroups: SidebarGroup[] = [
     {
@@ -167,7 +168,7 @@ export default function AdminDashboard() {
                     <div className="flex bg-[#141414] p-1 rounded-xl border border-gray-800 self-stretch sm:self-auto">
                       <button
                         onClick={() => setSubTab('manual')}
-                        className={`flex-1 sm:flex-none px-6 py-2 rounded-lg text-sm font-medium transition-all ${
+                        className={`flex-1 sm:flex-none px-5 py-2 rounded-lg text-sm font-medium transition-all ${
                           subTab === 'manual' ? 'bg-blue-600 text-white shadow-lg' : 'text-gray-400 hover:text-white'
                         }`}
                       >
@@ -175,15 +176,25 @@ export default function AdminDashboard() {
                       </button>
                       <button
                         onClick={() => setSubTab('scraper')}
-                        className={`flex-1 sm:flex-none px-6 py-2 rounded-lg text-sm font-medium transition-all ${
+                        className={`flex-1 sm:flex-none px-5 py-2 rounded-lg text-sm font-medium transition-all ${
                           subTab === 'scraper' ? 'bg-emerald-600 text-white shadow-lg' : 'text-gray-400 hover:text-white'
                         }`}
                       >
                         Web Scraper
                       </button>
+                      <button
+                        onClick={() => setSubTab('pdf')}
+                        className={`flex-1 sm:flex-none px-5 py-2 rounded-lg text-sm font-medium transition-all ${
+                          subTab === 'pdf' ? 'bg-violet-600 text-white shadow-lg' : 'text-gray-400 hover:text-white'
+                        }`}
+                      >
+                        PDF Ingestor
+                      </button>
                     </div>
                   </div>
-                  {subTab === 'manual' ? <ManualEntryTab /> : <SyncIntelligenceTab />}
+                  {subTab === 'manual' && <ManualEntryTab />}
+                  {subTab === 'scraper' && <SyncIntelligenceTab />}
+                  {subTab === 'pdf' && <DocumentKnowledgeTab />}
                 </div>
               )}
 

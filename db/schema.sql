@@ -31,6 +31,9 @@ ALTER TABLE knowledge_entries ADD COLUMN IF NOT EXISTS pinecone_vector_id    TEX
 ALTER TABLE knowledge_entries ADD COLUMN IF NOT EXISTS pinecone_namespace     TEXT;
 ALTER TABLE knowledge_entries ADD COLUMN IF NOT EXISTS embedding_model        TEXT DEFAULT 'gemini-embedding-001';
 ALTER TABLE knowledge_entries ADD COLUMN IF NOT EXISTS pinecone_synced_at     TIMESTAMP WITH TIME ZONE;
+-- Document ingestion: chunk-level location metadata
+ALTER TABLE knowledge_entries ADD COLUMN IF NOT EXISTS section_heading        TEXT;
+ALTER TABLE knowledge_entries ADD COLUMN IF NOT EXISTS page_number            INTEGER;
 
 
 
@@ -288,3 +291,36 @@ CREATE TABLE IF NOT EXISTS feedback_logs (
     feedback VARCHAR(20) NOT NULL,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- ─── Document Ingestions Registry ─────────────────────────────────────────────
+-- Tracks every manually uploaded/imported document as a first-class entity.
+-- Separate from scraped_pages (which is for web crawl jobs).
+-- Stores real analytics computed during the ingestion pipeline.
+
+CREATE TABLE IF NOT EXISTS document_ingestions (
+    id                        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name                      TEXT NOT NULL,
+    version                   TEXT NOT NULL DEFAULT '1.0',
+    source_type               TEXT NOT NULL DEFAULT 'pdf',   -- 'pdf' | 'docx' | 'txt'
+    source_url                TEXT,                          -- NULL for file uploads
+    file_name                 TEXT,                          -- Original filename for uploads
+    file_size_bytes           BIGINT DEFAULT 0,
+    document_hash             TEXT NOT NULL,                 -- SHA-256 of raw file bytes
+    status                    TEXT NOT NULL DEFAULT 'processing', -- 'processing'|'completed'|'failed'
+    is_active                 BOOLEAN NOT NULL DEFAULT true,  -- false = archived version
+    total_pages               INTEGER DEFAULT 0,
+    total_chunks              INTEGER DEFAULT 0,
+    total_tokens              INTEGER DEFAULT 0,
+    embedding_time_ms         INTEGER DEFAULT 0,
+    namespace_distribution    JSONB DEFAULT '{}',            -- e.g. {"policies":12,"finance":5}
+    duplicate_chunks_removed  INTEGER DEFAULT 0,
+    error_message             TEXT,
+    uploaded_by               TEXT DEFAULT 'admin',
+    created_at                TIMESTAMPTZ DEFAULT NOW(),
+    updated_at                TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_document_ingestions_hash   ON document_ingestions(document_hash);
+CREATE INDEX IF NOT EXISTS idx_document_ingestions_status ON document_ingestions(status);
+CREATE INDEX IF NOT EXISTS idx_document_ingestions_active ON document_ingestions(is_active);
+CREATE INDEX IF NOT EXISTS idx_document_ingestions_name   ON document_ingestions(name);

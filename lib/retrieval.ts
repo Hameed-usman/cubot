@@ -80,8 +80,10 @@ export function getTargetNamespaces(query: string): string[] {
     namespaces.push('notices')
   if (/event|seminar|workshop|conference|ceremony|convocation/i.test(q))
     namespaces.push('events')
-  if (/policy|rule|regulation|handbook|code.?of.?conduct/i.test(q))
-    namespaces.push('policies')
+  if (/policy|rule|regulation|handbook|code.?of.?conduct|slc|student.?handbook/i.test(q))
+    namespaces.push('policies', 'student-handbook')
+  if (/exam|examination|grading|gpa|marks|result/i.test(q))
+    namespaces.push('examination', 'academic')
   if (/contact|phone|email|address|location|reach|visit|map|directions/i.test(q))
     namespaces.push('contact')
   // Department-level routing: catches 'department', 'dept', 'list of departments', etc.
@@ -157,7 +159,8 @@ Alternatives:`,
 const ALL_NAMESPACES = [
   'faculty', 'admissions', 'scholarships', 'finance', 'notices',
   'events', 'policies', 'contact', 'facilities', 'dept-cs',
-  'dept-bba', 'dept-pharmacy', 'dept-nursing', 'academic', 'alumni', 'general'
+  'dept-bba', 'dept-pharmacy', 'dept-nursing', 'academic', 'alumni', 'general',
+  'student-handbook', 'examination'
 ]
 
 // ─── Vector Search (Multi-query + Multi-namespace) ─────────────────────────────
@@ -179,6 +182,10 @@ async function vectorSearch(queries: string[], topK: number = TOP_K_VECTOR, glob
       // If globalNamespaceOnly, search ALL namespaces instead of the empty default namespace
       const targetNamespaces = globalNamespaceOnly ? ALL_NAMESPACES : getTargetNamespaces(query)
 
+      // Determine which namespaces are "primary" (intent-targeted) vs fallback.
+      // Primary namespaces = everything except 'general' (the always-included fallback).
+      const primaryNamespaces = new Set(targetNamespaces.filter(ns => ns !== 'general'))
+
       // Each namespace gets the FULL topK budget — deduplication handles overlap.
       const namespacePromises = targetNamespaces.map(async (ns) => {
         const response = await index.namespace(ns).query({
@@ -186,7 +193,7 @@ async function vectorSearch(queries: string[], topK: number = TOP_K_VECTOR, glob
           topK,
           includeMetadata: true,
         })
-        return response.matches || []
+        return { ns, matches: response.matches || [] }
       })
 
       // If NOT global, we still do a fallback to the 'general' namespace explicitly
@@ -196,20 +203,29 @@ async function vectorSearch(queries: string[], topK: number = TOP_K_VECTOR, glob
             vector: embedding,
             topK: Math.ceil(topK / 2),
             includeMetadata: true,
-          }).then(r => r.matches || [])]
+          }).then(r => ({ ns: 'general', matches: r.matches || [] }))]
         : []
 
       const allMatchesArrays = await Promise.all([...namespacePromises, ...fallbackPromises])
 
-      for (const matches of allMatchesArrays) {
+      for (const { ns, matches } of allMatchesArrays) {
         for (const match of matches) {
           if ((match.score || 0) < MIN_VECTOR_SCORE) continue
           if (seen.has(match.id)) continue
           seen.add(match.id)
 
+          // NAMESPACE BOOST: chunks from intent-targeted namespaces get a score boost
+          // so they outrank generic "general" fallback matches.
+          // e.g. when user asks "examination policy", chunks from the 'examination' namespace
+          // should rank above CUSIT Library chunks from 'general' even if cosine scores are similar.
+          const isFromPrimaryNamespace = !globalNamespaceOnly && primaryNamespaces.size > 0 && primaryNamespaces.has(ns)
+          const boostedScore = isFromPrimaryNamespace
+            ? (match.score || 0) + 0.15  // significant boost for targeted namespace
+            : (match.score || 0)
+
           allResults.push({
             id: match.id,
-            score: match.score || 0,
+            score: boostedScore,
             metadata: (match.metadata || {}) as unknown as ChunkMetadata,
           })
         }
@@ -220,6 +236,7 @@ async function vectorSearch(queries: string[], topK: number = TOP_K_VECTOR, glob
   }
 
   return allResults
+
 }
 
 // ─── BM25 Keyword Search (PostgreSQL FTS) ─────────────────────────────────────

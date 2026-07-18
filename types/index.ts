@@ -64,6 +64,9 @@ export interface ChunkMetadata {
   lastModified?: string
   chunkIndex: number
   totalChunks: number
+  sectionName?: string
+  pageNumber?: number
+  keywords?: string[]
 }
 
 /**

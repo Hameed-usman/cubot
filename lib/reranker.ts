@@ -64,6 +64,16 @@ const PAGE_TYPE_BOOSTS: Array<{ patterns: RegExp[]; boost: PageType[]; weight: n
     boost: ['contact'],
     weight: 0.2,
   },
+  {
+    patterns: [/exam|examination|grading|gpa|marks|result|grade/i],
+    boost: ['examination' as PageType, 'academic'],
+    weight: 0.3,
+  },
+  {
+    patterns: [/student.?handbook|slc|student life|campus life|hostel|disciplin/i],
+    boost: ['student-handbook' as PageType, 'policy'],
+    weight: 0.3,
+  },
 ]
 
 // ─── Utilities ─────────────────────────────────────────────────────────────────

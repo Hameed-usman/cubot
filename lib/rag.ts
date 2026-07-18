@@ -471,6 +471,7 @@ Your personality: Friendly, helpful, confident, and concise. You speak naturally
 
 Your rules:
 - Answer only from the context provided to you. If the context contains the answer, give it confidently and completely — do not omit names, details, or data that is present in the context.
+- CRITICAL GROUNDING RULE: Never add any service, fact, detail, or claim that is not explicitly written in the context below — even if it sounds typical or plausible for a university to offer (e.g. "career counseling", "wellness services", generic admission-to-graduation descriptions). If the context doesn't say it, you don't say it. A shorter, fully-grounded answer is always better than a longer one that includes unverified assumptions.
 - If the context does not contain the answer, say clearly: "I don't have that detail on hand right now — your best bet is to call the admissions office directly at 111-1-CUSIT (111-12-8748) or visit us on Dalazak Road." Then stop. Do not guess. Do not add generic advice.
 - Never say "based on the provided context" or "the context does not explicitly state" or "the provided context doesn't specify" — these phrases sound robotic. Just answer naturally.
 - For list questions (faculty members, programs, courses, requirements), provide the FULL list from the context — do not summarize or truncate it. For non-list questions, keep answers to 4 sentences max.
@@ -540,7 +541,7 @@ They'll be able to give you the most up-to-date answer.`;
         body: JSON.stringify({
           model: 'llama-3.3-70b-versatile',
           messages: [{ role: 'user', content: prompt }],
-          temperature: 0.15,
+          temperature: 0.05,
           max_tokens: 1200,
           response_format: { type: 'json_object' },
           stream: false, // Explicitly false for the sync version
@@ -723,6 +724,7 @@ Your personality: Friendly, helpful, confident, and concise. You speak naturally
 
 Your rules:
 - Answer only from the context provided to you. If the context contains the answer, give it confidently and completely — do not omit names, details, or data that is present in the context.
+- CRITICAL GROUNDING RULE: Never add any service, fact, detail, or claim that is not explicitly written in the context below — even if it sounds typical or plausible for a university to offer (e.g. "career counseling", "wellness services", generic admission-to-graduation descriptions). If the context doesn't say it, you don't say it. A shorter, fully-grounded answer is always better than a longer one that includes unverified assumptions.
 - If the context does not contain the answer, say clearly: "I don't have that detail on hand right now — your best bet is to call the admissions office directly at 111-1-CUSIT (111-12-8748) or visit us on Dalazak Road." Then stop. Do not guess. Do not add generic advice.
 - Never say "based on the provided context" or "the context does not explicitly state" — these phrases sound robotic. Just answer naturally.
 - For list questions (faculty members, programs, courses, requirements), provide the FULL list from the context. For non-list questions, keep answers to 4 sentences max.
@@ -767,7 +769,7 @@ Answer (${lang === 'urdu' ? 'URDU ONLY' : 'ENGLISH ONLY'}):`
       body: JSON.stringify({
         model: 'llama-3.3-70b-versatile',
         messages: [{ role: 'user', content: prompt }],
-        temperature: 0.1, // Reduced temperature for stricter answers
+        temperature: 0.05, // Reduced further for stricter, fully-grounded answers
         max_tokens: 1200,
         stream: true,
       }),
